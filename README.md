@@ -58,7 +58,7 @@ If the drive doesn’t appear, repeat the BOOT/RESET step or try another cable/p
 
 ## Configure & Map
 
-Open the **Web Confi**[**g**](https://playabilitytech.github.io/OpenRudder/)[ → ](https://playabilitytech.github.io/OpenRudder/)[https://playabilitytech.github.io/OpenRudder/](https://playabilitytech.github.io/OpenRudder/)
+Open the **Web Config**[](https://playabilitytech.github.io/OpenRudder/)[ → ](https://playabilitytech.github.io/OpenRudder/)[https://playabilitytech.github.io/OpenRudder/](https://playabilitytech.github.io/OpenRudder/)
 
 ### Enable IMU
 
