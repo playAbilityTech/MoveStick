@@ -1,55 +1,87 @@
-## Add gyroscopic control for Xiao BLE Sense Board 
+# OpenRudder — Open-source Balance Board that you can use as a joystick, a mouse or a WASD keyboard
 
-### Overview
+**OpenRudder** turns a simple balance board into a USB **motion controller**.
+Tilt with your feet to steer a **virtual joystick**, move the **mouse**, or press **keyboard/gamepad** buttons—no drivers, no proprietary boxes.
 
-This change adds roll, pitch and shake support to the HID Remapper, enabling the Xiao BLE Sense IMU data as input sources. You can now:
+Built on the excellent [**HID Remapper by jfedor**](https://github.com/jfedor2/hid-remapper) project, with custom gyroscope support for the **Seeed XIAO BLE Sense**.
+A collaboration between [**PlayAbility Adaptive Software**](https://www.playability.gg/) and [**Hitclic**](https://hitclic.shop/).
 
-* Control games with your feets on a balance board — similar to a 3D Rudder
-* Add tilt‐ and shake‐based control to the Xbox Adaptive Controller and Adaptive joystick
-* Trigger clicks via a quick tap (using shake threshold)
-
-You can download the .uf2 firmware [here](https://github.com/squirelo/hid-remapper/actions/runs/16246750706/artifacts/3520810322)
-You can try the new configuration website [here](https://squirelo.github.io/hid-remapper/)
-
-### New Inputs
-
-* **Roll** (X axis)
-* **Pitch** (Y axis)
-* **Shake** 
-
-<img width="1472" height="387" alt="image" src="https://github.com/user-attachments/assets/db1512d2-5e78-44f0-89c4-ee5db99b7a04" />
-
-### Configuration
-
-1. **Enable IMU**
-   Go to the “Settings” tab and toggle on **IMU support**.
-
-2. **Adjust parameters**
-
-   * **Angle limit**: Clamp maximum tilt angle
-   * **Buffer size**: Smooth incoming data to reduce jitter
-   * **Axis inversion**: Easy axis change without using expressions
-
-<img width="1919" height="678" alt="image" src="https://github.com/user-attachments/assets/dbcfec3e-d6dc-47d2-bd06-bd1fb74eba64" />
-
-
-### Example Profiles
-
-Two new examples have been added in the config
-
-* **IMU mouse control**
-
-  * **Roll** → X cursor
-  * **Pitch** → Y cursor
-  * **Shake** → Left click
-
-* **IMU Switch gamepad**
-
-  * **Roll** → Left stick X-axis
-  * **Pitch** → Left stick Y-axis
-  * **Shake** → Button A
 ---
 
+## Quick Links
 
+* **Latest custom firmware (.uf2)** → [Download](https://github.com/squirelo/hid-remapper/actions/runs/16246750706/artifacts/3520810322)
+* **Web configuration** → [https://playabilitytech.github.io/OpenRudder/](https://playabilitytech.github.io/OpenRudder/)
 
-If anything looks off—or you’d like adjustments—please let me know!
+> Enumerates as standard **USB HID** (mouse, keyboard, gamepad) on Windows, macOS, and Linux.
+
+---
+
+## What You Can Do
+
+* **Feet-controlled joystick** — map **Roll**/**Pitch** to a gamepad stick (e.g., left stick X/Y)
+* **Motion mouse** — tilt to move the pointer, **tap** to click (shake threshold)
+* **Hands-free buttons** — use tilt ranges or shakes to trigger **A/B/X/Y**, **L/R**, **space**, **clicks**, etc.
+* **Adaptive setups** — pair with the Xbox Adaptive Controller, wheelchair joysticks, or other assistive gear
+
+---
+
+## Hardware
+
+Build OpenRudder with common parts:
+
+* **Microcontroller**: Seeed **XIAO BLE Sense** (nRF52840, with IMU)
+* **Balance board**:  buy one at your sport shop or on ama[zon ](https://amzn.to/47KK38L)[https://amzn.to/47KK38L](https://amzn.to/47KK38L)
+
+> Tip: Place the IMU close to the **rotation center** for the smoothest feel.
+
+---
+
+## Flash the Firmware (.uf2)
+
+1. **Enter bootloader** on the XIAO BLE Sense
+   Hold **BOOT** while pressing Reset button (or double-tap ****RESET**). A USB drive appears.
+2. **Drag & drop** the downloaded `.uf2` onto that drive.
+3. The board reboots and enumerates as a **USB HID** device.
+
+If the drive doesn’t appear, repeat the BOOT/RESET step or try another cable/port.
+
+---
+
+## Configure & Map
+
+Open the **Web Config**[](https://playabilitytech.github.io/OpenRudder/)[ → ](https://playabilitytech.github.io/OpenRudder/)[https://playabilitytech.github.io/OpenRudder/](https://playabilitytech.github.io/OpenRudder/)
+
+### Enable IMU
+
+* **Settings → IMU support** → toggle **ON**
+
+### Tune Feel
+
+* **Angle limit** — caps max tilt so you don’t saturate a stick axis
+* **Buffer size (smoothing)** — more = smoother, but slightly higher latency
+* **Axis inversion** — flip X/Y without editing expressions
+* **Shake threshold** — adjust tap sensitivity for clicks/buttons
+
+### Map Signals → Outputs
+
+* **Roll (X)** / **Pitch (Y)** → **mouse X/Y**, **left stick X/Y**, or **keys**
+* **Shake** → **left click**, **A**, **space**, etc.
+
+Screenshots:
+
+---
+
+## Ready-Made Profiles
+
+* **IMU → Mouse**
+
+  * Roll → Cursor **X**
+  * Pitch → Cursor **Y**
+  * Shake → **Left click**
+
+* **IMU → Gamepad (Switch/XInput-style)**
+
+  * Roll → **Left stick X**
+  * Pitch → **Left stick Y**
+  * Shake → **Button A**
