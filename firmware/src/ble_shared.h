@@ -3,15 +3,16 @@
 
 #include <stdint.h>
 
+#include "nus_protocol.h"
 #include "pico/util/queue.h"
 
 #define BLE_MAX_CENTRAL_CONNECTIONS 4
 #define BLE_SCAN_DELAY_MS 1000
 #define BLE_CLEAR_BONDS_BUTTON_PRESS_MS 3000
 
-#define BLE_NUS_VIRTUAL_INTERFACE 0x7f00
-#define BLE_NUS_VIRTUAL_VID 0x0f0d
-#define BLE_NUS_VIRTUAL_PID 0x00c1
+#define BLE_NUS_VIRTUAL_INTERFACE NUS_VIRTUAL_INTERFACE
+#define BLE_NUS_VIRTUAL_VID NUS_VIRTUAL_VID
+#define BLE_NUS_VIRTUAL_PID NUS_VIRTUAL_PID
 
 struct ble_report_t {
     uint16_t interface;

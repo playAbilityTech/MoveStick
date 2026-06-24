@@ -10,16 +10,22 @@ There's a special version of the remapper that takes inputs from Bluetooth devic
 
 The Bluetooth version of the remapper is available for Nordic nRF52840 boards and for Raspberry Pi Pico W / Pico 2 W.
 
-### nRF52840 boards
+### nRF52840 boards (physical BLE gamepads)
 
 Precompiled binaries are available for:
 
 * [Adafruit Feather nRF52840 Express](https://www.adafruit.com/product/4062)
 * [Seeed Studio Xiao nRF52840](https://www.seeedstudio.com/Seeed-XIAO-BLE-nRF52840-p-5201.html)
 
-To flash the [nRF firmware](firmware-bluetooth), first put the board in flashing mode by double clicking the reset button quickly. A drive should appear on your computer. Copy the [UF2 file that matches your board](https://github.com/jfedor2/hid-remapper/releases/latest) to that drive and that's it. If you want to flash a newer version of the firmware in the future, you can also put the board in firmware flashing mode using the HID Remapper [web configuration tool](https://www.remapper.org/config/).
+To flash the [nRF firmware](firmware-bluetooth) on Adafruit Feather or Seeed Xiao boards, first put the board in flashing mode by double clicking the reset button quickly. A drive should appear on your computer. Copy the [UF2 file that matches your board](https://github.com/jfedor2/hid-remapper/releases/latest) to that drive and that's it. If you want to flash a newer version of the firmware in the future, you can also put the board in firmware flashing mode using the HID Remapper [web configuration tool](https://www.remapper.org/config/).
 
-### Raspberry Pi Pico W / Pico 2 W
+To connect Bluetooth devices to the remapper, put the device in pairing mode, then put HID Remapper in pairing mode by pressing the user switch button or clicking **Pair new device** in the web configuration tool (on Seeed Xiao, short pin 0 to GND: short press to pair, hold > 3 s to forget all). The remapper automatically enters pairing mode if no devices are paired.
+
+You can tell the remapper is in pairing mode if the onboard LED is lit constantly. When it's not in pairing mode, the LED blinks, with the number of blinks per cycle corresponding to the number of currently connected devices.
+
+To make the remapper forget all currently paired devices, hold the user switch button for over 3 seconds, or click **Forget all devices** in the web configuration tool (or short the pairing pin to GND for over 3 seconds on the Seeed Xiao).
+
+### Raspberry Pi Pico W / Pico 2 W (NUS only)
 
 Precompiled binaries are available for:
 
@@ -38,20 +44,16 @@ PICO_BOARD=pico_w cmake .. && make remapper_bluetooth
 
 For Pico 2 W, use `PICO_BOARD=pico2_w` instead.
 
-The Pico W boards do not have a built-in user button. To pair or clear bonds without the web configuration tool, short **GPIO 22** to GND: a short press starts pairing a new device, holding for more than 3 seconds clears all paired devices.
+The Pico W firmware provides **Web Bluetooth NUS input only**. It does not scan for or pair physical BLE gamepads — the CYW43439 radio cannot reliably run BLE central and BLE peripheral at the same time. Use an nRF52840 board for physical controller pairing.
 
-To connect Bluetooth devices to the remapper, you need to put the device in pairing mode. This is device-specific, but usually involves holding a button for a few seconds. Then you also need to put HID Remapper in pairing mode. You do this by either pressing the "user switch" button on the board or by clicking the "Pair new device" button on the web configuration tool (the Xiao and Pico W boards don't have a user button so you have to either do it through the web interface or by shorting a GPIO pin to GND: pin 0 on the Xiao, GPIO 22 on the Pico W). The remapper will also automatically enter pairing mode if no devices are currently paired.
+The onboard LED flashes briefly when NUS input is received.
 
-You can tell the remapper is in pairing mode if the onboard LED is lit constantly. When it's not in pairing mode, the LED will be blinking, with the number of blinks per cycle corresponding to the number of currently connected devices.
+## BLE GATT peripheral input (NUS)
 
-To make the remapper forget all currently paired devices, hold the "user switch" button for over 3 seconds, or click the "Forget all devices" button on the web configuration tool (or short the pairing pin to GND for over 3 seconds on the Seeed Xiao or Pico W boards).
-
-## BLE GATT peripheral input
-
-The Bluetooth firmware also advertises a Nordic UART Service compatible GATT
-peripheral while continuing to scan for Bluetooth LE HID devices as a central.
-Reports written to this service are treated as a separate virtual input device,
-so they can be remapped together with connected BLE HID devices.
+The Bluetooth firmware advertises a Nordic UART Service compatible GATT
+peripheral. Reports written to this service are treated as a separate virtual
+input device, so they can be remapped together with connected BLE HID devices
+on nRF52840 boards.
 
 * Service UUID: `6e400001-b5a3-f393-e0a9-e50e24dcca9e`
 * Write characteristic: `6e400002-b5a3-f393-e0a9-e50e24dcca9e`
@@ -75,6 +77,31 @@ The decoded payload is:
 The descriptor number in the packet does not switch the USB descriptor at
 runtime. Choose the USB descriptor through the normal HID Remapper configuration
 so it is active when the board enumerates over USB.
+
+The [web configuration tool](config-tool-web) has a **Bluetooth** tab with a NUS
+tester that connects over Web Bluetooth and sends test gamepad reports. On
+nRF52840 boards the same tab also has **Pair new device** and **Forget all
+devices** for physical BLE controllers.
+
+## Troubleshooting pairing (nRF52840 only)
+
+### Onboard LED meaning
+
+| LED pattern | Meaning |
+|-------------|---------|
+| **Solid ON** | Scanning for a **new** device to pair |
+| **Blinking** | Reconnecting to bonded devices, or idle with no connections |
+| **N blinks per cycle** | N BLE input devices currently connected |
+
+If you click **Pair new device** and the LED **keeps blinking** instead of going solid, the remapper is not in new-device pairing mode. Click **Forget all devices**, unplug/replug the board, then try again.
+
+### Stale bonds
+
+If a previous pairing attempt failed or the controller address changed (common with Xbox controllers in Sync pairing mode), use **Forget all devices** in the web tool, or hold the pairing pin to GND for more than 3 seconds on the Seeed Xiao.
+
+### Xbox controller (Bluetooth LE mode)
+
+Use the controller's **Sync** button pairing mode (Xbox button blinking rapidly), not USB. Put the controller in pairing mode, click **Pair new device** on the remapper, and wait for the LED to go solid. After a successful connection the LED blinks once per cycle.
 
 ## Known issues
 

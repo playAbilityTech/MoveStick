@@ -184,6 +184,7 @@ const ignored_usages = new Set([
 ]);
 let modal_return_mapping = null;
 let modal_return_element = null;
+let nus_tester_connected = false;
 
 document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("open_device").addEventListener("click", open_device);
@@ -201,6 +202,12 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("add_quirk").addEventListener("click", add_empty_quirk);
 
     device_buttons_set_disabled_state(true);
+    update_bluetooth_buttons_state();
+
+    document.addEventListener("nus-connection-changed", (event) => {
+        nus_tester_connected = event.detail?.connected ?? false;
+        update_bluetooth_buttons_state();
+    });
 
     document.getElementById("partial_scroll_timeout_input").addEventListener("change", partial_scroll_timeout_onchange);
     document.getElementById("tap_hold_threshold_input").addEventListener("change", tap_hold_threshold_onchange);
@@ -271,7 +278,7 @@ async function open_device() {
                 await set_monitor_enabled(monitor_enabled);
                 await get_usages_from_device();
                 setup_usages_modals();
-                bluetooth_buttons_set_visibility(device.productName.includes("Bluetooth"));
+                update_bluetooth_buttons_state();
             }
         }
     } catch (e) {
@@ -282,6 +289,7 @@ async function open_device() {
 
     if (!success) {
         device = null;
+        update_bluetooth_buttons_state();
     }
 
     busy = false;
@@ -893,10 +901,18 @@ async function flash_b_side() {
 
 async function pair_new_device() {
     await send_feature_command(PAIR_NEW_DEVICE);
+    set_ble_pairing_status("Command sent. The onboard LED should turn solid while scanning for new devices. Put your controller in pairing mode now.");
 }
 
 async function clear_bonds() {
     await send_feature_command(CLEAR_BONDS);
+    set_ble_pairing_status("All paired devices forgotten. The onboard LED should turn solid while scanning for new devices.");
+}
+
+function set_ble_pairing_status(message) {
+    const status = document.getElementById("ble_input_status");
+    status.className = "alert alert-info mt-2";
+    status.textContent = message;
 }
 
 function file_uploaded() {
@@ -1488,6 +1504,7 @@ function imu_pitch_inverted_onchange() {
     config['imu_pitch_inverted'] = document.getElementById("imu_pitch_inverted_checkbox").checked;
 }
 
+
 function macro_entry_duration_onchange() {
     let value = parseInt(document.getElementById("macro_entry_duration_input").value, 10);
     if (isNaN(value)) {
@@ -1535,6 +1552,55 @@ function hid_on_disconnect(event) {
     if (event.device === device) {
         device = null;
         device_buttons_set_disabled_state(true);
+        update_bluetooth_buttons_state();
+    }
+}
+
+function device_is_nus_only() {
+    if (device == null) {
+        return false;
+    }
+
+    return /nus/i.test(device.productName || "");
+}
+
+function device_supports_bluetooth_pairing() {
+    if (device == null) {
+        return false;
+    }
+
+    if (device_is_nus_only()) {
+        return false;
+    }
+
+    const name = device.productName || "";
+    if (/bluetooth/i.test(name) || nus_tester_connected) {
+        return true;
+    }
+
+    // USB product strings may omit "Bluetooth" even on Pico W BT firmware; the
+    // PAIR_NEW_DEVICE command is safe to expose for any opened HID Remapper.
+    return /hid remapper/i.test(name);
+}
+
+function device_supports_flash_b_side() {
+    if (device == null) {
+        return false;
+    }
+
+    const name = device.productName || "";
+    return /hid remapper/i.test(name) && !/bluetooth/i.test(name) && !/nus/i.test(name) && !nus_tester_connected;
+}
+
+function update_bluetooth_buttons_state() {
+    if (device == null) {
+        bluetooth_buttons_set_state("closed");
+    } else if (device_is_nus_only()) {
+        bluetooth_buttons_set_state("nus_only");
+    } else if (device_supports_bluetooth_pairing()) {
+        bluetooth_buttons_set_state("bluetooth");
+    } else {
+        bluetooth_buttons_set_state("non_bluetooth");
     }
 }
 
@@ -1543,14 +1609,32 @@ function device_buttons_set_disabled_state(state) {
     document.getElementById("save_to_device").disabled = state;
     document.getElementById("flash_firmware").disabled = state;
     document.getElementById("flash_b_side").disabled = state;
-    document.getElementById("pair_new_device").disabled = state;
-    document.getElementById("clear_bonds").disabled = state;
 }
 
-function bluetooth_buttons_set_visibility(visible) {
-    document.getElementById("pair_new_device_container").classList.toggle("d-none", !visible);
-    document.getElementById("clear_bonds_container").classList.toggle("d-none", !visible);
-    document.getElementById("flash_b_side_container").classList.toggle("d-none", visible);
+function bluetooth_buttons_set_state(state) {
+    const pair_enabled = state === "bluetooth";
+    document.getElementById("pair_new_device").disabled = !pair_enabled;
+    document.getElementById("clear_bonds").disabled = !pair_enabled;
+    document.getElementById("flash_b_side_container").classList.toggle("d-none", !device_supports_flash_b_side());
+
+    const status = document.getElementById("ble_input_status");
+    if (state === "bluetooth") {
+        status.className = "alert alert-info mt-2";
+        let message = "Ready. If pairing fails, click Forget all devices first to clear stale bonds. Put your BLE LE controller in pairing mode (Xbox: hold Sync until the Xbox button blinks), click Pair new device, and confirm the onboard LED turns solid. After connect, the LED blinks N times per cycle where N is the number of connected devices.";
+        if (nus_tester_connected && device != null && !/bluetooth/i.test(device.productName || "")) {
+            message += " NUS is connected, so Bluetooth firmware is active even though the USB name does not include \"Bluetooth\".";
+        }
+        status.textContent = message;
+    } else if (state === "nus_only") {
+        status.className = "alert alert-info mt-2";
+        status.textContent = "This Pico W / Pico 2 W firmware supports Web Bluetooth NUS input only. Physical BLE gamepad pairing requires an nRF52840 board (Feather or Xiao). Use the NUS tester below.";
+    } else if (state === "non_bluetooth") {
+        status.className = "alert alert-warning mt-2";
+        status.textContent = "This device does not appear to support BLE gamepad pairing. Flash remapper_bluetooth_pico_w.uf2 or remapper_bluetooth_pico2_w.uf2 from the latest release.";
+    } else {
+        status.className = "alert alert-secondary mt-2";
+        status.textContent = "Open a Bluetooth-capable HID Remapper with Open device first.";
+    }
 }
 
 function mask_to_layer_list(layer_mask) {

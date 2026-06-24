@@ -1,5 +1,4 @@
 #include "ble_button_led.h"
-#include "ble_central.h"
 #include "ble_nus.h"
 #include "ble_shared.h"
 #include "flash_layout.h"
@@ -49,7 +48,6 @@ void extra_init() {
     }
 
     att_server_init(profile_data, att_read_callback, att_write_callback);
-    ble_central_init();
     ble_nus_init();
 
     hci_power_control(HCI_POWER_ON);
@@ -64,7 +62,7 @@ uint32_t get_gpio_valid_pins_mask() {
 #ifdef PICO_DEFAULT_UART_RX_PIN
         (1u << PICO_DEFAULT_UART_RX_PIN) |
 #endif
-        (1u << 22));
+        0);
 }
 
 void read_report(bool* new_report, bool* tick) {
@@ -72,24 +70,12 @@ void read_report(bool* new_report, bool* tick) {
     *new_report = false;
 
     ble_button_led_poll();
-    ble_central_poll();
 
     struct ble_report_t incoming_report;
     if (queue_try_remove(&ble_report_queue, &incoming_report)) {
         handle_received_report(incoming_report.data, incoming_report.len,
                                incoming_report.interface, incoming_report.external_report_id);
         *new_report = true;
-    }
-
-    struct ble_descriptor_t incoming_descriptor;
-    while (queue_try_remove(&ble_descriptor_queue, &incoming_descriptor)) {
-        parse_descriptor(1, 1, incoming_descriptor.data, incoming_descriptor.size,
-                         incoming_descriptor.conn_idx << 8, 0);
-    }
-
-    struct ble_disconnected_t disconnected_item;
-    while (queue_try_remove(&ble_disconnected_queue, &disconnected_item)) {
-        device_disconnected_callback(disconnected_item.conn_idx);
     }
 }
 

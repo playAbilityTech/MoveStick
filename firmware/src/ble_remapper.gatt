@@ -1,4 +1,4 @@
 #import <nordic_spp_service.gatt>
 
 PRIMARY_SERVICE, GAP_SERVICE
-CHARACTERISTIC, GAP_DEVICE_NAME, READ, "HID Remapper Bluetooth"
+CHARACTERISTIC, GAP_DEVICE_NAME, READ, "HID Remapper NUS"

@@ -195,8 +195,8 @@ add_executable(remapper_bluetooth
     src/main.cc
     src/remapper.cc
     src/remapper_bluetooth.cc
-    src/ble_central.cc
     src/ble_nus.cc
+    src/nus_protocol.cc
     src/ble_shared.cc
     src/ble_button_led.cc
     src/crc.cc
@@ -212,6 +212,7 @@ add_executable(remapper_bluetooth
 )
 target_compile_definitions(remapper_bluetooth PUBLIC
     REMAPPER_BLUETOOTH=1
+    REMAPPER_BLUETOOTH_NUS_ONLY=1
     CYW43_ENABLE_BLUETOOTH=1
     PICO_FLASH_BANK_TOTAL_SIZE=16384
 )

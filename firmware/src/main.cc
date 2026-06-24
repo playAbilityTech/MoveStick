@@ -19,7 +19,9 @@
 
 #include "activity_led.h"
 #ifdef REMAPPER_BLUETOOTH
+#if !defined(REMAPPER_BLUETOOTH_NUS_ONLY)
 #include "ble_central.h"
+#endif
 #include "flash_layout.h"
 #endif
 #include "config.h"
@@ -210,13 +212,13 @@ void reset_to_bootloader() {
 }
 
 void pair_new_device() {
-#ifdef REMAPPER_BLUETOOTH
+#if defined(REMAPPER_BLUETOOTH) && !defined(REMAPPER_BLUETOOTH_NUS_ONLY)
     ble_central_pair_new_device();
 #endif
 }
 
 void clear_bonds() {
-#ifdef REMAPPER_BLUETOOTH
+#if defined(REMAPPER_BLUETOOTH) && !defined(REMAPPER_BLUETOOTH_NUS_ONLY)
     ble_central_clear_bonds();
 #endif
 }
