@@ -10,7 +10,7 @@
 #include "platform.h"
 #include "remapper.h"
 
-const uint8_t CONFIG_VERSION = 19;
+const uint8_t CONFIG_VERSION = 20;
 
 const uint8_t CONFIG_FLAG_UNMAPPED_PASSTHROUGH = 0x01;
 const uint8_t CONFIG_FLAG_UNMAPPED_PASSTHROUGH_MASK = 0b00001111;
@@ -572,6 +572,9 @@ void load_config(const uint8_t* persisted_config) {
         imu_roll_inverted = false;
         imu_pitch_inverted = false;
     }
+    if (version < 20) {
+        imu_yaw_inverted = false;
+    }
 
     if ((version == 3) || (version == 4)) {
         load_config_v3_v4(persisted_config);
@@ -627,8 +630,8 @@ void load_config(const uint8_t* persisted_config) {
         return;
     }
 
-
-    persist_config_v19_t* config = (persist_config_v19_t*) persisted_config;
+    uint16_t persisted_config_header_size = version >= 20 ? sizeof(persist_config_v20_t) : sizeof(persist_config_v19_t);
+    persist_config_v20_t* config = (persist_config_v20_t*) persisted_config;
     unmapped_passthrough_layer_mask = config->unmapped_passthrough_layer_mask;
     ignore_auth_dev_inputs = config->flags & (1 << CONFIG_FLAG_IGNORE_AUTH_DEV_INPUTS_BIT);
     gpio_output_mode = !!(config->flags & (1 << CONFIG_FLAG_GPIO_OUTPUT_MODE_BIT));
@@ -657,13 +660,16 @@ void load_config(const uint8_t* persisted_config) {
         }
         imu_roll_inverted = config->imu_roll_inverted;
         imu_pitch_inverted = config->imu_pitch_inverted;
+        if (version >= 20) {
+            imu_yaw_inverted = config->imu_yaw_inverted;
+        }
     }
-    mapping_config11_t* buffer_mappings = (mapping_config11_t*) (persisted_config + sizeof(persist_config_v19_t));
+    mapping_config11_t* buffer_mappings = (mapping_config11_t*) (persisted_config + persisted_config_header_size);
     for (uint32_t i = 0; i < config->mapping_count; i++) {
         config_mappings.push_back(buffer_mappings[i]);
     }
 
-    const uint8_t* macros_config_ptr = (persisted_config + sizeof(persist_config_v19_t) + config->mapping_count * sizeof(mapping_config11_t));
+    const uint8_t* macros_config_ptr = (persisted_config + persisted_config_header_size + config->mapping_count * sizeof(mapping_config11_t));
     my_mutex_enter(MutexId::MACROS);
     for (int i = 0; i < NMACROS; i++) {
         macros[i].clear();
@@ -733,6 +739,7 @@ void fill_get_config(get_config_t* config) {
     config->imu_filter_buffer_size = imu_filter_buffer_size;
     config->imu_roll_inverted = imu_roll_inverted;
     config->imu_pitch_inverted = imu_pitch_inverted;
+    config->imu_yaw_inverted = imu_yaw_inverted;
     my_mutex_enter(MutexId::QUIRKS);
     config->quirk_count = quirks.size();
     my_mutex_exit(MutexId::QUIRKS);
@@ -757,6 +764,7 @@ void fill_persist_config(persist_config_t* config) {
     config->imu_filter_buffer_size = imu_filter_buffer_size;
     config->imu_roll_inverted = imu_roll_inverted;
     config->imu_pitch_inverted = imu_pitch_inverted;
+    config->imu_yaw_inverted = imu_yaw_inverted;
     my_mutex_enter(MutexId::QUIRKS);
     config->quirk_count = quirks.size();
     my_mutex_exit(MutexId::QUIRKS);
@@ -1036,6 +1044,7 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     }
                     imu_roll_inverted = config->imu_roll_inverted;
                     imu_pitch_inverted = config->imu_pitch_inverted;
+                    imu_yaw_inverted = config->imu_yaw_inverted;
                     break;
                 }
                 case ConfigCommand::GET_CONFIG:

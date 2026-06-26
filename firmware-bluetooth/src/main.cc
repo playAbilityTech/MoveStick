@@ -25,10 +25,10 @@
 #include "imu.h"
 #include "descriptor_parser.h"
 #include "globals.h"
+#include "nus_protocol.h"
 #include "our_descriptor.h"
 #include "platform.h"
 #include "remapper.h"
-#include "crc.h"
 
 LOG_MODULE_REGISTER(remapper, LOG_LEVEL_DBG);
 
@@ -36,9 +36,6 @@ LOG_MODULE_REGISTER(remapper, LOG_LEVEL_DBG);
 
 static const int SCAN_DELAY_MS = 1000;
 static const int CLEAR_BONDS_BUTTON_PRESS_MS = 3000;
-static const uint16_t NUS_VIRTUAL_INTERFACE = 0x7f00;
-static const uint16_t NUS_VIRTUAL_VID = 0x0f0d;
-static const uint16_t NUS_VIRTUAL_PID = 0x00c1;
 
 static struct bt_uuid_128 nus_service_uuid = BT_UUID_INIT_128(
     0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
@@ -52,25 +49,7 @@ static struct bt_uuid_128 nus_tx_uuid = BT_UUID_INIT_128(
     0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
     0x93, 0xf3, 0xa3, 0xb5, 0x03, 0x00, 0x40, 0x6e);
 
-#define NUS_PROTOCOL_VERSION 1
-#define NUS_PACKET_BUFFER_SIZE 512
-#define END 0300
-#define ESC 0333
-#define ESC_END 0334
-#define ESC_ESC 0335
-
-struct __attribute__((packed)) nus_packet_t {
-    uint8_t protocol_version;
-    uint8_t our_descriptor_number;
-    uint8_t len;
-    uint8_t report_id;
-    uint8_t data[0];
-};
-
-static uint8_t nus_packet_buffer[NUS_PACKET_BUFFER_SIZE];
-static uint16_t nus_bytes_read = 0;
-static bool nus_escaped = false;
-static bool nus_overflowed = false;
+static nus_decoder_t nus_decoder;
 static struct bt_conn* nus_conn;
 
 #define NUS_LATENCY_INSTRUMENTATION 1
@@ -138,8 +117,49 @@ K_MSGQ_DEFINE(set_report_q, sizeof(struct set_report_type), 8, 4);
 ATOMIC_DEFINE(tick_pending, 1);
 
 static void nus_start_advertising(void);
-static void nus_init_virtual_device(void);
 static void nus_process_bytes(const uint8_t* data, uint16_t len);
+
+extern "C" void nus_log_packet_too_small(uint16_t len) {
+    LOG_WRN("NUS packet too small: %d", len);
+}
+
+extern "C" void nus_log_invalid_packet(uint8_t protocol_version, uint8_t len, uint16_t payload_len,
+                                       uint8_t our_descriptor_number, uint8_t report_id) {
+    LOG_WRN("Invalid NUS packet: proto=%d len=%d payload=%d desc=%d report_id=%d",
+            protocol_version, len, payload_len, our_descriptor_number, report_id);
+}
+
+extern "C" void nus_log_descriptor_mismatch(uint8_t nus_descriptor, uint8_t active_descriptor) {
+    LOG_WRN("NUS descriptor %d does not match active USB descriptor %d",
+            nus_descriptor, active_descriptor);
+}
+
+extern "C" void nus_log_packet_too_large(void) {
+    LOG_WRN("NUS packet too large; dropping until frame end");
+}
+
+extern "C" void nus_log_crc_error(uint32_t expected_crc, uint32_t received_crc) {
+    LOG_WRN("NUS CRC error: expected 0x%08X, got 0x%08X", expected_crc, received_crc);
+}
+
+static void nus_report_received(uint8_t report_id, const uint8_t* payload, uint8_t payload_len, void* user_data) {
+    (void) user_data;
+
+    struct report_type report = {
+        .interface = NUS_VIRTUAL_INTERFACE,
+        .external_report_id = report_id,
+        .len = payload_len,
+    };
+    memcpy(report.data, payload, payload_len);
+    if (k_msgq_put(&report_q, &report, K_NO_WAIT)) {
+        LOG_WRN("Dropped NUS report: report queue full");
+    } else {
+#if NUS_LATENCY_INSTRUMENTATION
+        nus_rx_cycles = k_cycle_get_32();
+        nus_latency_pending = true;
+#endif
+    }
+}
 
 static ssize_t nus_rx_write_cb(struct bt_conn* conn, const struct bt_gatt_attr* attr,
                                const void* buf, uint16_t len, uint16_t offset, uint8_t flags) {
@@ -196,6 +216,12 @@ static void activity_led_off_work_fn(struct k_work* work) {
 }
 K_WORK_DELAYABLE_DEFINE(activity_led_off_work, activity_led_off_work_fn);
 
+static void nus_process_bytes(const uint8_t* data, uint16_t len) {
+    gpio_pin_set_dt(&led0, true);
+    k_work_reschedule(&activity_led_off_work, K_MSEC(50));
+    nus_decoder_process_bytes(&nus_decoder, data, len, nus_report_received, NULL);
+}
+
 enum class LedMode {
     OFF = 0,
     ON = 1,
@@ -246,170 +272,6 @@ static void led_work_fn(struct k_work* work) {
 static void set_led_mode(LedMode led_mode_) {
     if (atomic_set(&led_mode, (atomic_val_t) led_mode_) != (atomic_val_t) led_mode_) {
         k_work_reschedule(&led_work, K_NO_WAIT);
-    }
-}
-
-static const uint8_t nus_virtual_gamepad_descriptor[] = {
-    0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x05,        // Usage (Game Pad)
-    0xA1, 0x01,        // Collection (Application)
-    0x85, 0x01,        //   Report ID (1)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x01,        //   Logical Maximum (1)
-    0x35, 0x00,        //   Physical Minimum (0)
-    0x45, 0x01,        //   Physical Maximum (1)
-    0x75, 0x01,        //   Report Size (1)
-    0x95, 0x0E,        //   Report Count (14)
-    0x05, 0x09,        //   Usage Page (Button)
-    0x19, 0x01,        //   Usage Minimum (1)
-    0x29, 0x0E,        //   Usage Maximum (14)
-    0x81, 0x02,        //   Input (Data,Var,Abs)
-    0x95, 0x02,        //   Report Count (2)
-    0x81, 0x01,        //   Input (Const)
-    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
-    0x25, 0x0F,        //   Logical Maximum (15)
-    0x46, 0x3B, 0x01,  //   Physical Maximum (315)
-    0x75, 0x04,        //   Report Size (4)
-    0x95, 0x01,        //   Report Count (1)
-    0x65, 0x14,        //   Unit (English Rotation)
-    0x09, 0x39,        //   Usage (Hat switch)
-    0x81, 0x42,        //   Input (Data,Var,Abs,Null State)
-    0x65, 0x00,        //   Unit (None)
-    0x95, 0x01,        //   Report Count (1)
-    0x81, 0x01,        //   Input (Const)
-    0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-    0x46, 0xFF, 0x00,  //   Physical Maximum (255)
-    0x09, 0x30,        //   Usage (X)
-    0x09, 0x31,        //   Usage (Y)
-    0x09, 0x32,        //   Usage (Z)
-    0x09, 0x35,        //   Usage (Rz)
-    0x75, 0x08,        //   Report Size (8)
-    0x95, 0x04,        //   Report Count (4)
-    0x81, 0x02,        //   Input (Data,Var,Abs)
-    0x75, 0x08,        //   Report Size (8)
-    0x95, 0x01,        //   Report Count (1)
-    0x81, 0x01,        //   Input (Const)
-    0xC0,              // End Collection
-};
-
-static void nus_init_virtual_device(void) {
-    parse_descriptor(NUS_VIRTUAL_VID, NUS_VIRTUAL_PID,
-                     nus_virtual_gamepad_descriptor,
-                     sizeof(nus_virtual_gamepad_descriptor),
-                     NUS_VIRTUAL_INTERFACE, 0);
-    device_connected_callback(NUS_VIRTUAL_INTERFACE, NUS_VIRTUAL_VID, NUS_VIRTUAL_PID, 0);
-    their_descriptor_updated = true;
-}
-
-static void nus_handle_packet(const uint8_t* data, uint16_t len) {
-    static uint8_t last_descriptor_warning = 0xff;
-
-    if (len < sizeof(nus_packet_t)) {
-        LOG_WRN("NUS packet too small: %d", len);
-        return;
-    }
-
-    const nus_packet_t* msg = (const nus_packet_t*) data;
-    uint16_t payload_len = len - sizeof(nus_packet_t);
-
-    if ((msg->protocol_version != NUS_PROTOCOL_VERSION) ||
-        (msg->len != payload_len) ||
-        (payload_len > 64) ||
-        (msg->our_descriptor_number >= NOUR_DESCRIPTORS) ||
-        ((msg->report_id == 0) && (payload_len >= 64))) {
-        LOG_WRN("Invalid NUS packet: proto=%d len=%d payload=%d desc=%d report_id=%d",
-                msg->protocol_version, msg->len, payload_len,
-                msg->our_descriptor_number, msg->report_id);
-        return;
-    }
-
-    if ((msg->our_descriptor_number != our_descriptor_number) &&
-        (msg->our_descriptor_number != last_descriptor_warning)) {
-        last_descriptor_warning = msg->our_descriptor_number;
-        LOG_WRN("NUS descriptor %d does not match active USB descriptor %d",
-                msg->our_descriptor_number, our_descriptor_number);
-    }
-
-    struct report_type report = {
-        .interface = NUS_VIRTUAL_INTERFACE,
-        .external_report_id = msg->report_id,
-        .len = (uint8_t) payload_len,
-    };
-    memcpy(report.data, msg->data, payload_len);
-    if (k_msgq_put(&report_q, &report, K_NO_WAIT)) {
-        LOG_WRN("Dropped NUS report: report queue full");
-    } else {
-#if NUS_LATENCY_INSTRUMENTATION
-        nus_rx_cycles = k_cycle_get_32();
-        nus_latency_pending = true;
-#endif
-    }
-}
-
-static void nus_packet_append(uint8_t c) {
-    if (nus_bytes_read >= sizeof(nus_packet_buffer)) {
-        if (!nus_overflowed) {
-            LOG_WRN("NUS packet too large; dropping until frame end");
-        }
-        nus_overflowed = true;
-        return;
-    }
-    nus_packet_buffer[nus_bytes_read++] = c;
-}
-
-static void nus_process_byte(uint8_t c) {
-    if (nus_escaped) {
-        switch (c) {
-            case ESC_END:
-                nus_packet_append(END);
-                break;
-            case ESC_ESC:
-                nus_packet_append(ESC);
-                break;
-            default:
-                nus_packet_append(c);
-                break;
-        }
-        nus_escaped = false;
-        return;
-    }
-
-    switch (c) {
-        case END:
-            if (!nus_overflowed && (nus_bytes_read > 4)) {
-                uint32_t crc = crc32(nus_packet_buffer, nus_bytes_read - 4);
-                uint32_t received_crc =
-                    (nus_packet_buffer[nus_bytes_read - 4] << 0) |
-                    (nus_packet_buffer[nus_bytes_read - 3] << 8) |
-                    (nus_packet_buffer[nus_bytes_read - 2] << 16) |
-                    (nus_packet_buffer[nus_bytes_read - 1] << 24);
-                if (crc == received_crc) {
-                    nus_handle_packet(nus_packet_buffer, nus_bytes_read - 4);
-                } else {
-                    LOG_WRN("NUS CRC error: expected 0x%08X, got 0x%08X", crc, received_crc);
-                }
-            }
-            nus_bytes_read = 0;
-            nus_escaped = false;
-            nus_overflowed = false;
-            break;
-        case ESC:
-            if (!nus_overflowed) {
-                nus_escaped = true;
-            }
-            break;
-        default:
-            nus_packet_append(c);
-            break;
-    }
-}
-
-static void nus_process_bytes(const uint8_t* data, uint16_t len) {
-    gpio_pin_set_dt(&led0, true);
-    k_work_reschedule(&activity_led_off_work, K_MSEC(50));
-
-    for (uint16_t i = 0; i < len; i++) {
-        nus_process_byte(data[i]);
     }
 }
 
@@ -715,9 +577,7 @@ static void disconnected(struct bt_conn* conn, uint8_t reason) {
         LOG_INF("NUS client disconnected: %s (reason=%u)", addr, reason);
         bt_conn_unref(nus_conn);
         nus_conn = NULL;
-        nus_bytes_read = 0;
-        nus_escaped = false;
-        nus_overflowed = false;
+        nus_decoder_reset(&nus_decoder);
 #if NUS_LATENCY_INSTRUMENTATION
         nus_latency_pending = false;
 #endif
@@ -1296,16 +1156,17 @@ int main() {
     scan_init();
     parse_our_descriptor();
     set_mapping_from_config();
+    nus_decoder_init(&nus_decoder);
     nus_init_virtual_device();
     update_their_descriptor_derivates();
     their_descriptor_updated = false;
     nus_start_advertising();
 
-    // Initialize 6-axis IMU AFTER mapping system is ready
-#if DT_NODE_EXISTS(DT_NODELABEL(lsm6ds3tr_c))
+    // Initialize IMU after mapping system is ready.
+#if IMU_AVAILABLE
     if (imu_enabled) {
         if (!imu_init()) {
-            LOG_ERR("Failed to initialize 6-axis IMU");
+            LOG_ERR("Failed to initialize IMU");
         }
     } else {
         LOG_INF("IMU disabled in configuration - skipping IMU initialization");

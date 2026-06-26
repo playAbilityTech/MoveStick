@@ -37,6 +37,7 @@ uint8_t imu_angle_clamp_limit = 45;
 uint8_t imu_filter_buffer_size = 10;
 bool imu_roll_inverted = false;
 bool imu_pitch_inverted = false;
+bool imu_yaw_inverted = false;
 
 std::vector<mapping_config11_t> config_mappings;
 

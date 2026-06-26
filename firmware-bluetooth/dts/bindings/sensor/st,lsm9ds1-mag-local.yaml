@@ -1,0 +1,5 @@
+description: Local LSM9DS1 magnetometer node
+
+compatible: "st,lsm9ds1-mag-local"
+
+include: i2c-device.yaml

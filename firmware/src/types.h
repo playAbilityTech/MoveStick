@@ -330,7 +330,26 @@ struct __attribute__((packed)) persist_config_v19_t {
 
 typedef persist_config_v19_t persist_config_v18_t;
 
-typedef persist_config_v18_t persist_config_t;
+struct __attribute__((packed)) persist_config_v20_t {
+    uint8_t version;
+    uint8_t flags;
+    uint8_t unmapped_passthrough_layer_mask;
+    uint32_t partial_scroll_timeout;
+    uint16_t mapping_count;
+    uint8_t interval_override;
+    uint32_t tap_hold_threshold;
+    uint8_t gpio_debounce_time_ms;
+    uint8_t our_descriptor_number;
+    uint8_t macro_entry_duration;
+    uint16_t quirk_count;
+    uint8_t imu_angle_clamp_limit;
+    uint8_t imu_filter_buffer_size;
+    uint8_t imu_roll_inverted;
+    uint8_t imu_pitch_inverted;
+    uint8_t imu_yaw_inverted;
+};
+
+typedef persist_config_v20_t persist_config_t;
 
 struct __attribute__((packed)) get_config_t {
     uint8_t version;
@@ -350,6 +369,7 @@ struct __attribute__((packed)) get_config_t {
     uint8_t imu_filter_buffer_size;
     uint8_t imu_roll_inverted;
     uint8_t imu_pitch_inverted;
+    uint8_t imu_yaw_inverted;
 };
 
 struct __attribute__((packed)) set_config_t {
@@ -365,6 +385,7 @@ struct __attribute__((packed)) set_config_t {
     uint8_t imu_filter_buffer_size;
     uint8_t imu_roll_inverted;
     uint8_t imu_pitch_inverted;
+    uint8_t imu_yaw_inverted;
 };
 
 struct __attribute__((packed)) get_indexed_t {

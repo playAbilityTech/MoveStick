@@ -44,6 +44,7 @@ extern uint8_t imu_angle_clamp_limit;
 extern uint8_t imu_filter_buffer_size;
 extern bool imu_roll_inverted;
 extern bool imu_pitch_inverted;
+extern bool imu_yaw_inverted;
 
 extern std::vector<mapping_config11_t> config_mappings;
 

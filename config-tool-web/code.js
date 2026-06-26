@@ -8,7 +8,7 @@ const STICKY_FLAG = 1 << 0;
 const TAP_FLAG = 1 << 1;
 const HOLD_FLAG = 1 << 2;
 const CONFIG_SIZE = 36;
-const CONFIG_VERSION = 19;
+const CONFIG_VERSION = 20;
 const VENDOR_ID = 0xCAFE;
 const PRODUCT_ID = 0xBAF2;
 const DEFAULT_PARTIAL_SCROLL_TIMEOUT = 1000000;
@@ -154,6 +154,9 @@ let config = {
     'imu_enabled': false,
     'imu_angle_clamp_limit': DEFAULT_IMU_ANGLE_CLAMP_LIMIT,
     'imu_filter_buffer_size': DEFAULT_IMU_FILTER_BUFFER_SIZE,
+    'imu_roll_inverted': false,
+    'imu_pitch_inverted': false,
+    'imu_yaw_inverted': false,
     mappings: [{
         'source_usage': '0x00000000',
         'target_usage': '0x00000000',
@@ -230,6 +233,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("imu_filter_buffer_size_input").addEventListener("change", imu_filter_buffer_size_onchange);
     document.getElementById("imu_roll_inverted_checkbox").addEventListener("change", imu_roll_inverted_onchange);
     document.getElementById("imu_pitch_inverted_checkbox").addEventListener("change", imu_pitch_inverted_onchange);
+    document.getElementById("imu_yaw_inverted_checkbox").addEventListener("change", imu_yaw_inverted_onchange);
 
     document.getElementById("nav-monitor-tab").addEventListener("shown.bs.tab", monitor_tab_shown);
     document.getElementById("nav-monitor-tab").addEventListener("hide.bs.tab", monitor_tab_hide);
@@ -311,8 +315,8 @@ async function load_from_device() {
 
     try {
         await send_feature_command(GET_CONFIG);
-        const [config_version, flags, unmapped_passthrough_layer_mask, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, tap_hold_threshold, gpio_debounce_time_ms, our_descriptor_number, macro_entry_duration, quirk_count, imu_angle_clamp_limit, imu_filter_buffer_size, imu_roll_inverted, imu_pitch_inverted] =
-            await read_config_feature([UINT8, UINT8, UINT8, UINT32, UINT16, UINT32, UINT32, UINT8, UINT32, UINT8, UINT8, UINT8, UINT16, UINT8, UINT8, UINT8, UINT8]);
+        const [config_version, flags, unmapped_passthrough_layer_mask, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, tap_hold_threshold, gpio_debounce_time_ms, our_descriptor_number, macro_entry_duration, quirk_count, imu_angle_clamp_limit, imu_filter_buffer_size, imu_roll_inverted, imu_pitch_inverted, imu_yaw_inverted] =
+            await read_config_feature([UINT8, UINT8, UINT8, UINT32, UINT16, UINT32, UINT32, UINT8, UINT32, UINT8, UINT8, UINT8, UINT16, UINT8, UINT8, UINT8, UINT8, UINT8]);
         check_received_version(config_version);
 
         config['version'] = config_version;
@@ -331,6 +335,7 @@ async function load_from_device() {
         config['imu_filter_buffer_size'] = imu_filter_buffer_size;
         config['imu_roll_inverted'] = !!imu_roll_inverted;
         config['imu_pitch_inverted'] = !!imu_pitch_inverted;
+        config['imu_yaw_inverted'] = !!imu_yaw_inverted;
         config['mappings'] = [];
 
         for (let i = 0; i < mapping_count; i++) {
@@ -483,6 +488,7 @@ async function save_to_device() {
             [UINT8, config['imu_filter_buffer_size']],
             [UINT8, config['imu_roll_inverted'] ? 1 : 0],
             [UINT8, config['imu_pitch_inverted'] ? 1 : 0],
+            [UINT8, config['imu_yaw_inverted'] ? 1 : 0],
         ]);
         await send_feature_command(CLEAR_MAPPING);
 
@@ -668,6 +674,7 @@ function set_config_ui_state() {
     document.getElementById('imu_filter_buffer_size_input').value = config['imu_filter_buffer_size'] ?? DEFAULT_IMU_FILTER_BUFFER_SIZE;
     document.getElementById('imu_roll_inverted_checkbox').checked = config['imu_roll_inverted'] ?? false;
     document.getElementById('imu_pitch_inverted_checkbox').checked = config['imu_pitch_inverted'] ?? false;
+    document.getElementById('imu_yaw_inverted_checkbox').checked = config['imu_yaw_inverted'] ?? false;
 }
 
 function set_mappings_ui_state() {
@@ -804,6 +811,11 @@ function set_ui_state() {
         // IMU settings were added in version 19
         config['imu_angle_clamp_limit'] = DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
         config['imu_filter_buffer_size'] = DEFAULT_IMU_FILTER_BUFFER_SIZE;
+        config['imu_roll_inverted'] = false;
+        config['imu_pitch_inverted'] = false;
+    }
+    if (config['version'] < 20) {
+        config['imu_yaw_inverted'] = false;
     }
     if (config['version'] < CONFIG_VERSION) {
         config['version'] = CONFIG_VERSION;
@@ -1038,7 +1050,7 @@ function add_crc(data) {
 }
 
 function check_json_version(config_version) {
-    if (!([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(config_version))) {
+    if (!([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].includes(config_version))) {
         throw new Error("Incompatible version.");
     }
 }
@@ -1054,7 +1066,7 @@ async function check_device_version() {
     // device because it could be version X, ignore our GET_CONFIG call with version Y and
     // just happen to have Y at the right place in the buffer from some previous call done
     // by some other software.
-    for (const version of [CONFIG_VERSION, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2]) {
+    for (const version of [CONFIG_VERSION, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2]) {
         await send_feature_command(GET_CONFIG, [], version);
         const [received_version] = await read_config_feature([UINT8]);
         if (received_version == version) {
@@ -1504,6 +1516,9 @@ function imu_pitch_inverted_onchange() {
     config['imu_pitch_inverted'] = document.getElementById("imu_pitch_inverted_checkbox").checked;
 }
 
+function imu_yaw_inverted_onchange() {
+    config['imu_yaw_inverted'] = document.getElementById("imu_yaw_inverted_checkbox").checked;
+}
 
 function macro_entry_duration_onchange() {
     let value = parseInt(document.getElementById("macro_entry_duration_input").value, 10);

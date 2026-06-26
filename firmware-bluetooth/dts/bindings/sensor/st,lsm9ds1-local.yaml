@@ -1,0 +1,5 @@
+description: Local LSM9DS1 accelerometer and gyroscope node
+
+compatible: "st,lsm9ds1-local"
+
+include: i2c-device.yaml

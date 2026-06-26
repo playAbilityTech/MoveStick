@@ -19,6 +19,17 @@ Precompiled binaries are available for:
 
 To flash the [nRF firmware](firmware-bluetooth) on Adafruit Feather or Seeed Xiao boards, first put the board in flashing mode by double clicking the reset button quickly. A drive should appear on your computer. Copy the [UF2 file that matches your board](https://github.com/jfedor2/hid-remapper/releases/latest) to that drive and that's it. If you want to flash a newer version of the firmware in the future, you can also put the board in firmware flashing mode using the HID Remapper [web configuration tool](https://www.remapper.org/config/).
 
+Arduino Nano 33 BLE Sense boards use Arduino's bossac bootloader instead of a UF2 mass-storage drive. Double tap reset until the orange LED pulses, then flash the built `remapper.bin` with the Arduino version of `bossac.exe`.
+
+For local Nano 33 BLE Sense builds on Windows:
+
+```powershell
+.\firmware-bluetooth\build-nano33-ble-sense.ps1
+.\firmware-bluetooth\flash-nano33-ble-sense.ps1
+```
+
+The flash script expects Arduino IDE plus the Arduino Mbed OS Nano Boards package to be installed so it can find Arduino's `bossac.exe`.
+
 To connect Bluetooth devices to the remapper, put the device in pairing mode, then put HID Remapper in pairing mode by pressing the user switch button or clicking **Pair new device** in the web configuration tool (on Seeed Xiao, short pin 0 to GND: short press to pair, hold > 3 s to forget all). The remapper automatically enters pairing mode if no devices are paired.
 
 You can tell the remapper is in pairing mode if the onboard LED is lit constantly. When it's not in pairing mode, the LED blinks, with the number of blinks per cycle corresponding to the number of currently connected devices.

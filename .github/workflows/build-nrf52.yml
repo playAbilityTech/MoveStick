@@ -24,6 +24,9 @@ jobs:
           - board: "seeed_xiao_nrf52840"
             name: "seeed_xiao_nrf52840_sense"
             extra_args: "-- \"-DOVERLAY_CONFIG=boards/arm/seeed_xiao_nrf52840/seeed_xiao_nrf52840_sense.conf\" \"-DDTC_OVERLAY_FILE=boards/arm/seeed_xiao_nrf52840/seeed_xiao_nrf52840_sense.overlay\""
+          - board: "arduino_nano_33_ble_sense"
+            name: "arduino_nano_33_ble_sense_lsm9ds1"
+            extra_args: "-- \"-DDTC_OVERLAY_FILE=boards/arm/arduino_nano_33_ble/arduino_nano_33_ble_sense_lsm9ds1.overlay\""
     steps:
       - uses: actions/checkout@v6
       - name: Build
@@ -31,10 +34,12 @@ jobs:
           docker run -v $PWD:/workdir/project -w /workdir/project/firmware-bluetooth nordicplayground/nrfconnect-sdk:v2.2-branch \
             west build -b ${{ matrix.board }} ${{ matrix.extra_args }}
           cp firmware-bluetooth/build/zephyr/remapper.uf2 firmware-bluetooth/remapper_${{ matrix.name }}.uf2
+          cp firmware-bluetooth/build/zephyr/remapper.bin firmware-bluetooth/remapper_${{ matrix.name }}.bin
           cp firmware-bluetooth/build/zephyr/remapper.hex firmware-bluetooth/remapper_${{ matrix.name }}.hex
       - uses: actions/upload-artifact@v7
         with:
           name: artifact-${{ matrix.name }}
           path: |
             firmware-bluetooth/remapper_${{ matrix.name }}.uf2
+            firmware-bluetooth/remapper_${{ matrix.name }}.bin
             firmware-bluetooth/remapper_${{ matrix.name }}.hex
