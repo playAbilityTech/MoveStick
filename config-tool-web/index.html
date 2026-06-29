@@ -9,6 +9,42 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.min.js" integrity="sha384-QJHtvGhmr9XOIpI6YVutG+2QOK9T+ZnN4kzFN1RtK3zEFEIsxhlmWl5/YESvpZ13" crossorigin="anonymous"></script>
     <script src="code.js" type="module"></script>
     <script src="nus-tester.js" type="module"></script>
+    <style>
+        .nus-floating {
+            position: fixed;
+            right: 1rem;
+            bottom: 1rem;
+            z-index: 1040;
+            width: min(420px, calc(100vw - 2rem));
+            pointer-events: none;
+        }
+
+        .nus-floating > * {
+            pointer-events: auto;
+        }
+
+        .nus-floating-panel {
+            max-height: calc(100vh - 2rem);
+            overflow-y: auto;
+        }
+
+        .nus-floating-panel .btn {
+            white-space: nowrap;
+        }
+
+        .nus-floating-panel .form-label {
+            margin-bottom: 0.25rem;
+        }
+
+        @media (max-width: 575.98px) {
+            .nus-floating {
+                left: 0.5rem;
+                right: 0.5rem;
+                bottom: 0.5rem;
+                width: auto;
+            }
+        }
+    </style>
 </head>
 
 <body>
@@ -37,6 +73,7 @@
         <div class="nav nav-tabs" id="nav-tab" role="tablist">
             <button class="nav-link active" id="nav-mappings-tab" data-bs-toggle="tab" data-bs-target="#nav-mappings" type="button" role="tab">Mappings</button>
             <button class="nav-link" id="nav-settings-tab" data-bs-toggle="tab" data-bs-target="#nav-settings" type="button" role="tab">Settings</button>
+            <button class="nav-link" id="nav-sensors-tab" data-bs-toggle="tab" data-bs-target="#nav-sensors" type="button" role="tab">Sensors</button>
             <button class="nav-link" id="nav-macros-tab" data-bs-toggle="tab" data-bs-target="#nav-macros" type="button" role="tab">Macros</button>
             <button class="nav-link" id="nav-expressions-tab" data-bs-toggle="tab" data-bs-target="#nav-expressions" type="button" role="tab">Expressions</button>
             <button class="nav-link" id="nav-actions-tab" data-bs-toggle="tab" data-bs-target="#nav-actions" type="button" role="tab">Actions</button>
@@ -229,6 +266,29 @@
                     </div>
                 </div>
                 <div class="row mt-3">
+                    <p><em>Changes to the emulated device type become active after disconnecting and reconnecting HID Remapper.</em></p>
+                    <p><em>Changes to gamepad input normalization are applied after re-plugging the device or HID Remapper.</em></p>
+                </div>
+
+                <h5 class="mt-4">Custom usages</h5>
+
+                <div id="quirks_container">
+
+                </div>
+                <div class="mt-4">
+                    <button id="add_quirk" type="button" class="btn btn-primary">Add usage</button>
+                </div>
+
+                <div class="row mt-3">
+                    <em>If both Vendor ID and Product ID are zero, usage applies to all interfaces on all devices.<br>
+                    Set size to zero to remove an existing usage.<br>
+                    Custom usages are only applied after re-plugging the device or HID Remapper.</em>
+                </div>
+            </div>
+
+            <div class="tab-pane" id="nav-sensors" role="tabpanel" tabindex="0">
+
+                <div class="row mt-4">
                     <div class="col-4 text-end">
                         <label for="imu_enabled_checkbox" class="col-form-label">Enable onboard sensors</label>
                     </div>
@@ -238,14 +298,74 @@
                 </div>
                 <div class="row mt-3">
                     <div class="col-4 text-end">
-                        <label for="imu_angle_clamp_limit_input" class="col-form-label">Motion max angle</label>
+                        <label class="col-form-label">IMU actions</label>
+                    </div>
+                    <div class="col-auto d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-outline-secondary" id="recenter_imu_button">Recenter IMU</button>
+                        <button type="button" class="btn btn-outline-secondary" id="pause_imu_button">Pause IMU</button>
+                        <button type="button" class="btn btn-outline-secondary" id="resume_imu_button">Resume IMU</button>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-4 text-end">
+                        <label for="imu_pitch_deadzone_input" class="col-form-label">Pitch deadzone</label>
                     </div>
                     <div class="col-auto">
                         <div class="input-group">
-                            <input type="number" min="1" max="90" id="imu_angle_clamp_limit_input" class="form-control text-end" style="max-width: 100px;">
-                            <span class="input-group-text">°</span>
+                            <input type="number" min="0" max="90" id="imu_pitch_deadzone_input" class="form-control text-end" style="max-width: 100px;">
+                            <span class="input-group-text">deg</span>
                         </div>
-                        <div class="small text-muted mt-1">1 to 90 degrees</div>
+                        <div class="small text-muted mt-1">0 to 90 degrees</div>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-4 text-end">
+                        <label for="imu_roll_deadzone_input" class="col-form-label">Roll deadzone</label>
+                    </div>
+                    <div class="col-auto">
+                        <div class="input-group">
+                            <input type="number" min="0" max="90" id="imu_roll_deadzone_input" class="form-control text-end" style="max-width: 100px;">
+                            <span class="input-group-text">deg</span>
+                        </div>
+                        <div class="small text-muted mt-1">0 to 90 degrees</div>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-4 text-end">
+                        <label class="col-form-label">Motion max angles</label>
+                    </div>
+                    <div class="col-8">
+                        <div class="row g-2">
+                            <div class="col-sm-4">
+                                <label for="imu_pitch_pos_max_angle_input" class="form-label small mb-1">Pitch +</label>
+                                <div class="input-group">
+                                    <input type="number" min="1" max="90" id="imu_pitch_pos_max_angle_input" class="form-control text-end">
+                                    <span class="input-group-text">deg</span>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <label for="imu_pitch_neg_max_angle_input" class="form-label small mb-1">Pitch -</label>
+                                <div class="input-group">
+                                    <input type="number" min="1" max="90" id="imu_pitch_neg_max_angle_input" class="form-control text-end">
+                                    <span class="input-group-text">deg</span>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <label for="imu_roll_pos_max_angle_input" class="form-label small mb-1">Roll +</label>
+                                <div class="input-group">
+                                    <input type="number" min="1" max="90" id="imu_roll_pos_max_angle_input" class="form-control text-end">
+                                    <span class="input-group-text">deg</span>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <label for="imu_roll_neg_max_angle_input" class="form-label small mb-1">Roll -</label>
+                                <div class="input-group">
+                                    <input type="number" min="1" max="90" id="imu_roll_neg_max_angle_input" class="form-control text-end">
+                                    <span class="input-group-text">deg</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="small text-muted mt-1">1 to 90 degrees per direction</div>
                     </div>
                 </div>
                 <div class="row mt-3">
@@ -276,6 +396,50 @@
                         <input type="checkbox" id="imu_pitch_inverted_checkbox" class="form-check-input align-middle">
                     </div>
                 </div>
+                <div class="row mt-4">
+                    <div class="col-4 text-end">
+                        <label class="col-form-label">Yaw</label>
+                    </div>
+                    <div class="col-8">
+                        <div class="alert alert-secondary py-2 mb-0">Yaw requires a magnetometer and is only available on Arduino Nano 33 BLE Sense. It is not available on XIAO BLE Sense.</div>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-4 text-end">
+                        <label for="imu_yaw_deadzone_input" class="col-form-label">Yaw deadzone</label>
+                    </div>
+                    <div class="col-auto">
+                        <div class="input-group">
+                            <input type="number" min="0" max="90" id="imu_yaw_deadzone_input" class="form-control text-end" style="max-width: 100px;">
+                            <span class="input-group-text">deg</span>
+                        </div>
+                        <div class="small text-muted mt-1">0 to 90 degrees</div>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-4 text-end">
+                        <label class="col-form-label">Yaw max angles</label>
+                    </div>
+                    <div class="col-8">
+                        <div class="row g-2">
+                            <div class="col-sm-4">
+                                <label for="imu_yaw_pos_max_angle_input" class="form-label small mb-1">Yaw +</label>
+                                <div class="input-group">
+                                    <input type="number" min="1" max="90" id="imu_yaw_pos_max_angle_input" class="form-control text-end">
+                                    <span class="input-group-text">deg</span>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <label for="imu_yaw_neg_max_angle_input" class="form-label small mb-1">Yaw -</label>
+                                <div class="input-group">
+                                    <input type="number" min="1" max="90" id="imu_yaw_neg_max_angle_input" class="form-control text-end">
+                                    <span class="input-group-text">deg</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="small text-muted mt-1">1 to 90 degrees per direction</div>
+                    </div>
+                </div>
                 <div class="row mt-3">
                     <div class="col-4 text-end">
                         <label for="imu_yaw_inverted_checkbox" class="col-form-label">Invert yaw axis</label>
@@ -285,25 +449,9 @@
                     </div>
                 </div>
                 <div class="row mt-3">
-                    <p><em>Changes to the emulated device type become active after disconnecting and reconnecting HID Remapper.</em></p>
-                    <p><em>Changes to gamepad input normalization are applied after re-plugging the device or HID Remapper.</em></p>
                     <p><em>Changes to the onboard sensors enable setting are applied after re-plugging the device or HID Remapper.</em></p>
                 </div>
 
-                <h5 class="mt-4">Custom usages</h5>
-
-                <div id="quirks_container">
-
-                </div>
-                <div class="mt-4">
-                    <button id="add_quirk" type="button" class="btn btn-primary">Add usage</button>
-                </div>
-
-                <div class="row mt-3">
-                    <em>If both Vendor ID and Product ID are zero, usage applies to all interfaces on all devices.<br>
-                    Set size to zero to remove an existing usage.<br>
-                    Custom usages are only applied after re-plugging the device or HID Remapper.</em>
-                </div>
             </div>
 
             <div class="tab-pane" id="nav-macros" role="tabpanel" tabindex="0">
@@ -391,6 +539,11 @@
                     <div class="col-4" id="clear_bonds_container">
                         <button id="clear_bonds" type="button" class="btn btn-primary w-100" disabled>Forget all devices</button>
                     </div>
+                </div>
+
+                <div class="form-check mt-4">
+                    <input id="nus_tester_enabled" type="checkbox" class="form-check-input">
+                    <label for="nus_tester_enabled" class="form-check-label">Show floating NUS tester</label>
                 </div>
 
                 <h5 class="mt-4">NUS tester</h5>

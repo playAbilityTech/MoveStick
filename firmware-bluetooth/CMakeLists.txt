@@ -15,6 +15,7 @@ target_include_directories(app PRIVATE ${REMAPPER_SRC})
 target_sources(app PRIVATE
     src/main.cc
     src/ble_nus.cc
+    src/apds9960_sensor.cc
     src/mic_level.cc
     src/motion_fusion.cc
     src/motion_sensor.cc

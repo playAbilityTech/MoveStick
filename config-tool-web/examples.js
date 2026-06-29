@@ -101,8 +101,16 @@ const examples = [
             "input_labels": 0,
             "normalize_gamepad_inputs": false,
             "imu_enabled": true,
-            "imu_angle_clamp_limit": 30,
-            "imu_filter_buffer_size": 5
+            "imu_filter_buffer_size": 5,
+            "imu_pitch_deadzone": 0,
+            "imu_roll_deadzone": 0,
+            "imu_yaw_deadzone": 0,
+            "imu_pitch_pos_max_angle": 30,
+            "imu_pitch_neg_max_angle": 30,
+            "imu_roll_pos_max_angle": 30,
+            "imu_roll_neg_max_angle": 30,
+            "imu_yaw_pos_max_angle": 30,
+            "imu_yaw_neg_max_angle": 30
         }
     },
     {
@@ -206,8 +214,16 @@ const examples = [
             "input_labels": 0,
             "normalize_gamepad_inputs": false,
             "imu_enabled": true,
-            "imu_angle_clamp_limit": 30,
-            "imu_filter_buffer_size": 5
+            "imu_filter_buffer_size": 5,
+            "imu_pitch_deadzone": 0,
+            "imu_roll_deadzone": 0,
+            "imu_yaw_deadzone": 0,
+            "imu_pitch_pos_max_angle": 30,
+            "imu_pitch_neg_max_angle": 30,
+            "imu_roll_pos_max_angle": 30,
+            "imu_roll_neg_max_angle": 30,
+            "imu_yaw_pos_max_angle": 30,
+            "imu_yaw_neg_max_angle": 30
         }
     },
     {

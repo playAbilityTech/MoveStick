@@ -223,6 +223,15 @@ void clear_bonds() {
 #endif
 }
 
+void recenter_imu() {
+}
+
+void pause_imu() {
+}
+
+void resume_imu() {
+}
+
 void my_mutexes_init() {
     for (int i = 0; i < (int8_t) MutexId::N; i++) {
         mutex_init(&mutexes[i]);

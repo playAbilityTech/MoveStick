@@ -38,19 +38,29 @@ normalize_gamepad_inputs = (
     config.get("normalize_gamepad_inputs", True) if version >= 18 else False
 )
 imu_enabled = config.get("imu_enabled", False)
-imu_angle_clamp_limit = config.get("imu_angle_clamp_limit", 90)
-imu_filter_buffer_size = config.get("imu_filter_buffer_size", 10)
+legacy_imu_angle_clamp_limit = config.get("imu_angle_clamp_limit", DEFAULT_IMU_MAX_ANGLE)
+legacy_imu_tilt_deadzone = config.get("imu_tilt_deadzone", DEFAULT_IMU_DEADZONE)
+imu_filter_buffer_size = config.get("imu_filter_buffer_size", DEFAULT_IMU_FILTER_BUFFER_SIZE)
+imu_pitch_deadzone = config.get("imu_pitch_deadzone", legacy_imu_tilt_deadzone)
+imu_roll_deadzone = config.get("imu_roll_deadzone", legacy_imu_tilt_deadzone)
+imu_yaw_deadzone = config.get("imu_yaw_deadzone", DEFAULT_IMU_DEADZONE)
+imu_pitch_pos_max_angle = config.get("imu_pitch_pos_max_angle", legacy_imu_angle_clamp_limit)
+imu_pitch_neg_max_angle = config.get("imu_pitch_neg_max_angle", legacy_imu_angle_clamp_limit)
+imu_roll_pos_max_angle = config.get("imu_roll_pos_max_angle", legacy_imu_angle_clamp_limit)
+imu_roll_neg_max_angle = config.get("imu_roll_neg_max_angle", legacy_imu_angle_clamp_limit)
+imu_yaw_pos_max_angle = config.get("imu_yaw_pos_max_angle", legacy_imu_angle_clamp_limit)
+imu_yaw_neg_max_angle = config.get("imu_yaw_neg_max_angle", legacy_imu_angle_clamp_limit)
 imu_roll_inverted = config.get("imu_roll_inverted", False)
 imu_pitch_inverted = config.get("imu_pitch_inverted", False)
+imu_yaw_inverted = config.get("imu_yaw_inverted", False)
 
 flags = 0
 flags |= IGNORE_AUTH_DEV_INPUTS_FLAG if ignore_auth_dev_inputs else 0
 flags |= GPIO_OUTPUT_MODE_FLAG if gpio_output_mode == 1 else 0
 flags |= NORMALIZE_GAMEPAD_INPUTS_FLAG if normalize_gamepad_inputs else 0
-flags |= IMU_ENABLE_FLAG if imu_enabled else 0
 
 data = struct.pack(
-    "<BBBBBLBLBBBBB8B",
+    "<BBBBBLBLBBB12B",
     REPORT_ID_CONFIG,
     CONFIG_VERSION,
     SET_CONFIG,
@@ -62,11 +72,34 @@ data = struct.pack(
     gpio_debounce_time_ms,
     our_descriptor_number,
     macro_entry_duration,
-    imu_angle_clamp_limit,
+    *([0] * 12)
+)
+device.send_feature_report(add_crc(data))
+
+sensor_flags = 0
+sensor_flags |= SENSOR_CONFIG_FLAG_ENABLE if imu_enabled else 0
+sensor_flags |= SENSOR_CONFIG_FLAG_INVERT_ROLL if imu_roll_inverted else 0
+sensor_flags |= SENSOR_CONFIG_FLAG_INVERT_PITCH if imu_pitch_inverted else 0
+sensor_flags |= SENSOR_CONFIG_FLAG_INVERT_YAW if imu_yaw_inverted else 0
+
+data = struct.pack(
+    "<BBB12B14B",
+    REPORT_ID_CONFIG,
+    CONFIG_VERSION,
+    SET_SENSOR_CONFIG,
+    sensor_flags,
     imu_filter_buffer_size,
-    imu_roll_inverted,
-    imu_pitch_inverted,
-    *([0] * 8)
+    imu_pitch_deadzone,
+    imu_roll_deadzone,
+    imu_yaw_deadzone,
+    imu_pitch_pos_max_angle,
+    imu_pitch_neg_max_angle,
+    imu_roll_pos_max_angle,
+    imu_roll_neg_max_angle,
+    imu_yaw_pos_max_angle,
+    imu_yaw_neg_max_angle,
+    0,
+    *([0] * 14)
 )
 device.send_feature_report(add_crc(data))
 

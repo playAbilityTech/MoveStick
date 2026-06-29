@@ -94,8 +94,8 @@ K_MSGQ_DEFINE(disconnected_q, sizeof(struct disconnected_type), CONFIG_BT_MAX_CO
 K_MSGQ_DEFINE(set_report_q, sizeof(struct set_report_type), 8, 4);
 ATOMIC_DEFINE(tick_pending, 1);
 
-static bool submit_report(uint16_t interface, uint8_t external_report_id,
-                          const uint8_t* payload, uint8_t payload_len) {
+bool submit_report(uint16_t interface, uint8_t external_report_id,
+                   const uint8_t* payload, uint8_t payload_len) {
     struct report_type report = {
         .interface = interface,
         .external_report_id = external_report_id,
@@ -932,6 +932,18 @@ void pair_new_device() {
 
 void clear_bonds() {
     k_work_submit(&clear_bonds_work);
+}
+
+void recenter_imu() {
+    sensor_inputs_recalibrate_orientation();
+}
+
+void pause_imu() {
+    sensor_inputs_pause_imu();
+}
+
+void resume_imu() {
+    sensor_inputs_resume_imu();
 }
 
 void my_mutexes_init() {

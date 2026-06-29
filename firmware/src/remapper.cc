@@ -47,6 +47,7 @@ const uint8_t resolution_multiplier_masks[] = {
 std::vector<reverse_mapping_t> reverse_mapping;
 std::vector<reverse_mapping_t> reverse_mapping_macros;
 std::vector<reverse_mapping_t> reverse_mapping_layers;
+std::vector<reverse_mapping_t> reverse_mapping_imu_actions;
 
 std::unordered_map<uint8_t, std::unordered_map<uint32_t, usage_def_t>> our_usages;  // report_id -> usage -> usage_def
 std::unordered_map<uint32_t, usage_def_t> our_usages_flat;
@@ -96,6 +97,7 @@ std::vector<int32_t*> relative_usages;  // input_state pointers
 struct macro_entry_t {
     uint8_t duration_left;
     std::vector<uint32_t> items;
+    bool started = false;
 };
 
 std::queue<macro_entry_t> macro_queue;
@@ -143,6 +145,27 @@ inline int32_t handle_scroll(map_source_t& map_source, uint32_t target_usage, in
         ret = ticks * 1000;
     }
     return ret;
+}
+
+inline bool map_source_triggered(const map_source_t& map_source) {
+    return (layer_state_mask & map_source.layer_mask) &&
+           ((!map_source.tap && !map_source.hold && (*(map_source.input_state + PREV_STATE_OFFSET) == 0) && (*map_source.input_state != 0)) ||
+               (map_source.hold && map_source.tap_hold_state->hold && !map_source.tap_hold_state->prev_hold) ||
+               (map_source.tap && map_source.tap_hold_state->tap));
+}
+
+void execute_imu_action(uint32_t usage) {
+    switch (usage) {
+        case RECENTER_IMU_USAGE:
+            recenter_imu();
+            break;
+        case PAUSE_IMU_USAGE:
+            pause_imu();
+            break;
+        case RESUME_IMU_USAGE:
+            resume_imu();
+            break;
+    }
 }
 
 inline int8_t get_bit(const uint8_t* data, int len, uint16_t bitpos) {
@@ -392,6 +415,7 @@ void set_mapping_from_config() {
     reverse_mapping.clear();
     reverse_mapping_macros.clear();
     reverse_mapping_layers.clear();
+    reverse_mapping_imu_actions.clear();
     used_state_slots = 0;
     usage_state_ptr.clear();
     register_ptrs.clear();
@@ -694,6 +718,8 @@ void set_mapping_from_config() {
             reverse_mapping_macros.push_back(rev_map);
         } else if ((target & 0xFFFF0000) == LAYERS_USAGE_PAGE) {
             reverse_mapping_layers.push_back(rev_map);
+        } else if ((target & 0xFFFF0000) == IMU_ACTION_USAGE_PAGE) {
+            reverse_mapping_imu_actions.push_back(rev_map);
         } else {
             reverse_mapping.push_back(rev_map);
         }
@@ -1188,15 +1214,20 @@ void process_mapping(bool auto_repeat) {
             continue;
         }
         for (auto const& map_source : rev_map.sources) {
-            if ((layer_state_mask & map_source.layer_mask) &&
-                ((!map_source.tap && !map_source.hold && (*(map_source.input_state + PREV_STATE_OFFSET) == 0) && (*map_source.input_state != 0)) ||
-                    (map_source.hold && map_source.tap_hold_state->hold && !map_source.tap_hold_state->prev_hold) ||
-                    (map_source.tap && map_source.tap_hold_state->tap))) {
+            if (map_source_triggered(map_source)) {
                 my_mutex_enter(MutexId::MACROS);
                 for (auto const& usages : macros[macro]) {
                     macro_queue.push((macro_entry_t){ duration_left : macro_entry_duration, items : usages });
                 }
                 my_mutex_exit(MutexId::MACROS);
+            }
+        }
+    }
+
+    for (auto const& rev_map : reverse_mapping_imu_actions) {
+        for (auto const& map_source : rev_map.sources) {
+            if (map_source_triggered(map_source)) {
+                execute_imu_action(rev_map.target);
             }
         }
     }
@@ -1322,11 +1353,17 @@ void process_mapping(bool auto_repeat) {
 
     // execute queued macros
     if (!macro_queue.empty()) {
+        bool macro_entry_started = !macro_queue.front().started;
+        macro_queue.front().started = true;
         for (uint32_t usage : macro_queue.front().items) {
             if ((usage & 0xFFFF0000) == GPIO_USAGE_PAGE) {
                 put_bits(gpio_out_state, sizeof(gpio_out_state), (uint16_t) (usage & 0xFFFF), 1, 1);
             } else if ((usage & 0xFFFF0000) == DPAD_USAGE_PAGE) {
                 put_bits(&dpad_state, sizeof(dpad_state), (uint16_t) (usage & 0xFFFF) - 1, 1, 1);
+            } else if ((usage & 0xFFFF0000) == IMU_ACTION_USAGE_PAGE) {
+                if (macro_entry_started) {
+                    execute_imu_action(usage);
+                }
             } else {
                 bool handled = false;
                 for (auto const& array_usage : our_array_range_usages) {

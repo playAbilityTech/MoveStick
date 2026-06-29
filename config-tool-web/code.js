@@ -16,8 +16,9 @@ const DEFAULT_TAP_HOLD_THRESHOLD = 200000;
 const DEFAULT_GPIO_DEBOUNCE_TIME = 5;
 const DEFAULT_SCALING = 1000;
 const DEFAULT_MACRO_ENTRY_DURATION = 1;
-const DEFAULT_IMU_ANGLE_CLAMP_LIMIT = 45;
 const DEFAULT_IMU_FILTER_BUFFER_SIZE = 10;
+const DEFAULT_IMU_DEADZONE = 0;
+const DEFAULT_IMU_MAX_ANGLE = 45;
 
 const NLAYERS = 8;
 const NMACROS = 32;
@@ -26,7 +27,6 @@ const MACRO_ITEMS_IN_PACKET = 6;
 const IGNORE_AUTH_DEV_INPUTS_FLAG = 1 << 4;
 const GPIO_OUTPUT_MODE_FLAG = 1 << 5;
 const NORMALIZE_GAMEPAD_INPUTS_FLAG = 1 << 6;
-const IMU_ENABLE_FLAG = 1 << 7;
 const HUB_PORT_NONE = 255;
 
 const QUIRK_FLAG_RELATIVE_MASK = 0b10000000;
@@ -63,6 +63,16 @@ const SET_MONITOR_ENABLED = 22;
 const CLEAR_QUIRKS = 23;
 const ADD_QUIRK = 24;
 const GET_QUIRK = 25;
+const SET_SENSOR_CONFIG = 26;
+const GET_SENSOR_CONFIG = 27;
+const RECENTER_IMU = 28;
+const PAUSE_IMU = 29;
+const RESUME_IMU = 30;
+
+const SENSOR_CONFIG_FLAG_ENABLE = 1 << 0;
+const SENSOR_CONFIG_FLAG_INVERT_ROLL = 1 << 1;
+const SENSOR_CONFIG_FLAG_INVERT_PITCH = 1 << 2;
+const SENSOR_CONFIG_FLAG_INVERT_YAW = 1 << 3;
 
 const PERSIST_CONFIG_SUCCESS = 1;
 const PERSIST_CONFIG_CONFIG_TOO_BIG = 2;
@@ -152,8 +162,16 @@ let config = {
     'input_labels': 0,
     'normalize_gamepad_inputs': true,
     'imu_enabled': false,
-    'imu_angle_clamp_limit': DEFAULT_IMU_ANGLE_CLAMP_LIMIT,
     'imu_filter_buffer_size': DEFAULT_IMU_FILTER_BUFFER_SIZE,
+    'imu_pitch_deadzone': DEFAULT_IMU_DEADZONE,
+    'imu_roll_deadzone': DEFAULT_IMU_DEADZONE,
+    'imu_yaw_deadzone': DEFAULT_IMU_DEADZONE,
+    'imu_pitch_pos_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_pitch_neg_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_roll_pos_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_roll_neg_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_yaw_pos_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_yaw_neg_max_angle': DEFAULT_IMU_MAX_ANGLE,
     'imu_roll_inverted': false,
     'imu_pitch_inverted': false,
     'imu_yaw_inverted': false,
@@ -216,8 +234,6 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("tap_hold_threshold_input").addEventListener("change", tap_hold_threshold_onchange);
     document.getElementById("gpio_debounce_time_input").addEventListener("change", gpio_debounce_time_onchange);
     document.getElementById("macro_entry_duration_input").addEventListener("change", macro_entry_duration_onchange);
-    document.getElementById("imu_angle_clamp_limit_input").addEventListener("change", imu_angle_clamp_limit_onchange);
-    document.getElementById("imu_filter_buffer_size_input").addEventListener("change", imu_filter_buffer_size_onchange);
     for (let i = 0; i < NLAYERS; i++) {
         document.getElementById("unmapped_passthrough_checkbox" + i).addEventListener("change", unmapped_passthrough_onchange);
     }
@@ -229,7 +245,18 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("ignore_auth_dev_inputs_checkbox").addEventListener("change", ignore_auth_dev_inputs_onchange);
     document.getElementById("normalize_gamepad_inputs_checkbox").addEventListener("change", normalize_gamepad_inputs_onchange);
     document.getElementById("imu_enabled_checkbox").addEventListener("change", imu_enabled_onchange);
-    document.getElementById("imu_angle_clamp_limit_input").addEventListener("change", imu_angle_clamp_limit_onchange);
+    document.getElementById("recenter_imu_button").addEventListener("click", recenter_imu);
+    document.getElementById("pause_imu_button").addEventListener("click", pause_imu);
+    document.getElementById("resume_imu_button").addEventListener("click", resume_imu);
+    document.getElementById("imu_pitch_deadzone_input").addEventListener("change", imu_pitch_deadzone_onchange);
+    document.getElementById("imu_roll_deadzone_input").addEventListener("change", imu_roll_deadzone_onchange);
+    document.getElementById("imu_yaw_deadzone_input").addEventListener("change", imu_yaw_deadzone_onchange);
+    document.getElementById("imu_pitch_pos_max_angle_input").addEventListener("change", imu_pitch_pos_max_angle_onchange);
+    document.getElementById("imu_pitch_neg_max_angle_input").addEventListener("change", imu_pitch_neg_max_angle_onchange);
+    document.getElementById("imu_roll_pos_max_angle_input").addEventListener("change", imu_roll_pos_max_angle_onchange);
+    document.getElementById("imu_roll_neg_max_angle_input").addEventListener("change", imu_roll_neg_max_angle_onchange);
+    document.getElementById("imu_yaw_pos_max_angle_input").addEventListener("change", imu_yaw_pos_max_angle_onchange);
+    document.getElementById("imu_yaw_neg_max_angle_input").addEventListener("change", imu_yaw_neg_max_angle_onchange);
     document.getElementById("imu_filter_buffer_size_input").addEventListener("change", imu_filter_buffer_size_onchange);
     document.getElementById("imu_roll_inverted_checkbox").addEventListener("change", imu_roll_inverted_onchange);
     document.getElementById("imu_pitch_inverted_checkbox").addEventListener("change", imu_pitch_inverted_onchange);
@@ -315,9 +342,13 @@ async function load_from_device() {
 
     try {
         await send_feature_command(GET_CONFIG);
-        const [config_version, flags, unmapped_passthrough_layer_mask, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, tap_hold_threshold, gpio_debounce_time_ms, our_descriptor_number, macro_entry_duration, quirk_count, imu_angle_clamp_limit, imu_filter_buffer_size, imu_roll_inverted, imu_pitch_inverted, imu_yaw_inverted] =
-            await read_config_feature([UINT8, UINT8, UINT8, UINT32, UINT16, UINT32, UINT32, UINT8, UINT32, UINT8, UINT8, UINT8, UINT16, UINT8, UINT8, UINT8, UINT8, UINT8]);
+        const [config_version, flags, unmapped_passthrough_layer_mask, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, tap_hold_threshold, gpio_debounce_time_ms, our_descriptor_number, macro_entry_duration, quirk_count] =
+            await read_config_feature([UINT8, UINT8, UINT8, UINT32, UINT16, UINT32, UINT32, UINT8, UINT32, UINT8, UINT8, UINT8, UINT16]);
         check_received_version(config_version);
+
+        await send_feature_command(GET_SENSOR_CONFIG);
+        const [sensor_flags, imu_filter_buffer_size, imu_pitch_deadzone, imu_roll_deadzone, imu_yaw_deadzone, imu_pitch_pos_max_angle, imu_pitch_neg_max_angle, imu_roll_pos_max_angle, imu_roll_neg_max_angle, imu_yaw_pos_max_angle, imu_yaw_neg_max_angle] =
+            await read_config_feature([UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8]);
 
         config['version'] = config_version;
         config['unmapped_passthrough_layers'] = mask_to_layer_list(unmapped_passthrough_layer_mask);
@@ -329,13 +360,21 @@ async function load_from_device() {
         config['ignore_auth_dev_inputs'] = !!(flags & IGNORE_AUTH_DEV_INPUTS_FLAG);
         config['gpio_output_mode'] = (flags & GPIO_OUTPUT_MODE_FLAG) ? 1 : 0;
         config['normalize_gamepad_inputs'] = !!(flags & NORMALIZE_GAMEPAD_INPUTS_FLAG);
-        config['imu_enabled'] = !!(flags & IMU_ENABLE_FLAG);
         config['macro_entry_duration'] = macro_entry_duration + 1;
-        config['imu_angle_clamp_limit'] = imu_angle_clamp_limit;
+        config['imu_enabled'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_ENABLE);
         config['imu_filter_buffer_size'] = imu_filter_buffer_size;
-        config['imu_roll_inverted'] = !!imu_roll_inverted;
-        config['imu_pitch_inverted'] = !!imu_pitch_inverted;
-        config['imu_yaw_inverted'] = !!imu_yaw_inverted;
+        config['imu_pitch_deadzone'] = imu_pitch_deadzone;
+        config['imu_roll_deadzone'] = imu_roll_deadzone;
+        config['imu_yaw_deadzone'] = imu_yaw_deadzone;
+        config['imu_pitch_pos_max_angle'] = imu_pitch_pos_max_angle;
+        config['imu_pitch_neg_max_angle'] = imu_pitch_neg_max_angle;
+        config['imu_roll_pos_max_angle'] = imu_roll_pos_max_angle;
+        config['imu_roll_neg_max_angle'] = imu_roll_neg_max_angle;
+        config['imu_yaw_pos_max_angle'] = imu_yaw_pos_max_angle;
+        config['imu_yaw_neg_max_angle'] = imu_yaw_neg_max_angle;
+        config['imu_roll_inverted'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_INVERT_ROLL);
+        config['imu_pitch_inverted'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_INVERT_PITCH);
+        config['imu_yaw_inverted'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_INVERT_YAW);
         config['mappings'] = [];
 
         for (let i = 0; i < mapping_count; i++) {
@@ -471,10 +510,10 @@ async function save_to_device() {
 
     try {
         await send_feature_command(SUSPEND);
+        normalize_imu_config();
         const flags = (config['ignore_auth_dev_inputs'] ? IGNORE_AUTH_DEV_INPUTS_FLAG : 0) |
             (config['gpio_output_mode'] ? GPIO_OUTPUT_MODE_FLAG : 0) |
-            (config['normalize_gamepad_inputs'] ? NORMALIZE_GAMEPAD_INPUTS_FLAG : 0) |
-            (config['imu_enabled'] ? IMU_ENABLE_FLAG : 0);
+            (config['normalize_gamepad_inputs'] ? NORMALIZE_GAMEPAD_INPUTS_FLAG : 0);
         await send_feature_command(SET_CONFIG, [
             [UINT8, flags],
             [UINT8, layer_list_to_mask(config['unmapped_passthrough_layers'])],
@@ -484,11 +523,24 @@ async function save_to_device() {
             [UINT8, config['gpio_debounce_time_ms']],
             [UINT8, config['our_descriptor_number']],
             [UINT8, config['macro_entry_duration'] - 1],
-            [UINT8, config['imu_angle_clamp_limit']],
+        ]);
+        const sensor_flags = (config['imu_enabled'] ? SENSOR_CONFIG_FLAG_ENABLE : 0) |
+            (config['imu_roll_inverted'] ? SENSOR_CONFIG_FLAG_INVERT_ROLL : 0) |
+            (config['imu_pitch_inverted'] ? SENSOR_CONFIG_FLAG_INVERT_PITCH : 0) |
+            (config['imu_yaw_inverted'] ? SENSOR_CONFIG_FLAG_INVERT_YAW : 0);
+        await send_feature_command(SET_SENSOR_CONFIG, [
+            [UINT8, sensor_flags],
             [UINT8, config['imu_filter_buffer_size']],
-            [UINT8, config['imu_roll_inverted'] ? 1 : 0],
-            [UINT8, config['imu_pitch_inverted'] ? 1 : 0],
-            [UINT8, config['imu_yaw_inverted'] ? 1 : 0],
+            [UINT8, config['imu_pitch_deadzone']],
+            [UINT8, config['imu_roll_deadzone']],
+            [UINT8, config['imu_yaw_deadzone']],
+            [UINT8, config['imu_pitch_pos_max_angle']],
+            [UINT8, config['imu_pitch_neg_max_angle']],
+            [UINT8, config['imu_roll_pos_max_angle']],
+            [UINT8, config['imu_roll_neg_max_angle']],
+            [UINT8, config['imu_yaw_pos_max_angle']],
+            [UINT8, config['imu_yaw_neg_max_angle']],
+            [UINT8, 0],
         ]);
         await send_feature_command(CLEAR_MAPPING);
 
@@ -670,8 +722,16 @@ function set_config_ui_state() {
     document.getElementById('input_labels_modal_dropdown').value = config['input_labels'];
     document.getElementById('normalize_gamepad_inputs_checkbox').checked = config['normalize_gamepad_inputs'];
     document.getElementById('imu_enabled_checkbox').checked = config['imu_enabled'];
-    document.getElementById('imu_angle_clamp_limit_input').value = config['imu_angle_clamp_limit'] ?? DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
     document.getElementById('imu_filter_buffer_size_input').value = config['imu_filter_buffer_size'] ?? DEFAULT_IMU_FILTER_BUFFER_SIZE;
+    document.getElementById('imu_pitch_deadzone_input').value = config['imu_pitch_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    document.getElementById('imu_roll_deadzone_input').value = config['imu_roll_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    document.getElementById('imu_yaw_deadzone_input').value = config['imu_yaw_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    document.getElementById('imu_pitch_pos_max_angle_input').value = config['imu_pitch_pos_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_pitch_neg_max_angle_input').value = config['imu_pitch_neg_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_roll_pos_max_angle_input').value = config['imu_roll_pos_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_roll_neg_max_angle_input').value = config['imu_roll_neg_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_yaw_pos_max_angle_input').value = config['imu_yaw_pos_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_yaw_neg_max_angle_input').value = config['imu_yaw_neg_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
     document.getElementById('imu_roll_inverted_checkbox').checked = config['imu_roll_inverted'] ?? false;
     document.getElementById('imu_pitch_inverted_checkbox').checked = config['imu_pitch_inverted'] ?? false;
     document.getElementById('imu_yaw_inverted_checkbox').checked = config['imu_yaw_inverted'] ?? false;
@@ -756,6 +816,54 @@ function set_expressions_ui_state() {
     }
 }
 
+function normalize_numeric_config_value(key, default_value, min_value, max_value) {
+    let value = parseInt(config[key], 10);
+    if (isNaN(value)) {
+        value = default_value;
+    }
+    if (value < min_value) {
+        value = min_value;
+    }
+    if (value > max_value) {
+        value = max_value;
+    }
+    config[key] = value;
+}
+
+function normalize_imu_config() {
+    const legacy_max_angle = config['imu_angle_clamp_limit'];
+    const max_angle_default = legacy_max_angle ?? DEFAULT_IMU_MAX_ANGLE;
+
+    config['imu_enabled'] = config['imu_enabled'] ?? false;
+    config['imu_filter_buffer_size'] = config['imu_filter_buffer_size'] ?? DEFAULT_IMU_FILTER_BUFFER_SIZE;
+    const legacy_deadzone = config['imu_tilt_deadzone'];
+    config['imu_pitch_deadzone'] = config['imu_pitch_deadzone'] ?? legacy_deadzone ?? DEFAULT_IMU_DEADZONE;
+    config['imu_roll_deadzone'] = config['imu_roll_deadzone'] ?? legacy_deadzone ?? DEFAULT_IMU_DEADZONE;
+    config['imu_yaw_deadzone'] = config['imu_yaw_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    config['imu_pitch_pos_max_angle'] = config['imu_pitch_pos_max_angle'] ?? max_angle_default;
+    config['imu_pitch_neg_max_angle'] = config['imu_pitch_neg_max_angle'] ?? max_angle_default;
+    config['imu_roll_pos_max_angle'] = config['imu_roll_pos_max_angle'] ?? max_angle_default;
+    config['imu_roll_neg_max_angle'] = config['imu_roll_neg_max_angle'] ?? max_angle_default;
+    config['imu_yaw_pos_max_angle'] = config['imu_yaw_pos_max_angle'] ?? max_angle_default;
+    config['imu_yaw_neg_max_angle'] = config['imu_yaw_neg_max_angle'] ?? max_angle_default;
+    config['imu_roll_inverted'] = config['imu_roll_inverted'] ?? false;
+    config['imu_pitch_inverted'] = config['imu_pitch_inverted'] ?? false;
+    config['imu_yaw_inverted'] = config['imu_yaw_inverted'] ?? false;
+
+    normalize_numeric_config_value('imu_filter_buffer_size', DEFAULT_IMU_FILTER_BUFFER_SIZE, 1, 16);
+    normalize_numeric_config_value('imu_pitch_deadzone', DEFAULT_IMU_DEADZONE, 0, 90);
+    normalize_numeric_config_value('imu_roll_deadzone', DEFAULT_IMU_DEADZONE, 0, 90);
+    normalize_numeric_config_value('imu_yaw_deadzone', DEFAULT_IMU_DEADZONE, 0, 90);
+    normalize_numeric_config_value('imu_pitch_pos_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_pitch_neg_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_roll_pos_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_roll_neg_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_yaw_pos_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_yaw_neg_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    delete config['imu_angle_clamp_limit'];
+    delete config['imu_tilt_deadzone'];
+}
+
 function set_ui_state() {
     if (config['version'] == 3) {
         config['unmapped_passthrough_layers'] = config['unmapped_passthrough'] ? [0] : [];
@@ -809,7 +917,7 @@ function set_ui_state() {
     }
     if (config['version'] < 19) {
         // IMU settings were added in version 19
-        config['imu_angle_clamp_limit'] = DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
+        config['imu_enabled'] = false;
         config['imu_filter_buffer_size'] = DEFAULT_IMU_FILTER_BUFFER_SIZE;
         config['imu_roll_inverted'] = false;
         config['imu_pitch_inverted'] = false;
@@ -817,6 +925,7 @@ function set_ui_state() {
     if (config['version'] < 20) {
         config['imu_yaw_inverted'] = false;
     }
+    normalize_imu_config();
     if (config['version'] < CONFIG_VERSION) {
         config['version'] = CONFIG_VERSION;
     }
@@ -919,6 +1028,18 @@ async function pair_new_device() {
 async function clear_bonds() {
     await send_feature_command(CLEAR_BONDS);
     set_ble_pairing_status("All paired devices forgotten. The onboard LED should turn solid while scanning for new devices.");
+}
+
+async function recenter_imu() {
+    await send_feature_command(RECENTER_IMU);
+}
+
+async function pause_imu() {
+    await send_feature_command(PAUSE_IMU);
+}
+
+async function resume_imu() {
+    await send_feature_command(RESUME_IMU);
 }
 
 function set_ble_pairing_status(message) {
@@ -1492,20 +1613,60 @@ function imu_enabled_onchange() {
     config['imu_enabled'] = document.getElementById("imu_enabled_checkbox").checked;
 }
 
-function imu_angle_clamp_limit_onchange() {
-    let value = parseInt(document.getElementById("imu_angle_clamp_limit_input").value, 10);
+function clamp_number_input(element_id, default_value, min_value, max_value) {
+    const element = document.getElementById(element_id);
+    let value = parseInt(element.value, 10);
     if (isNaN(value)) {
-        value = DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
+        value = default_value;
     }
-    if (value > 90) {
-        value = 90;
-        document.getElementById("imu_angle_clamp_limit_input").value = 90;
+    if (value < min_value) {
+        value = min_value;
     }
-    config['imu_angle_clamp_limit'] = value;
+    if (value > max_value) {
+        value = max_value;
+    }
+    element.value = value;
+    return value;
 }
 
 function imu_filter_buffer_size_onchange() {
-    config['imu_filter_buffer_size'] = parseInt(document.getElementById("imu_filter_buffer_size_input").value, 10);
+    config['imu_filter_buffer_size'] = clamp_number_input("imu_filter_buffer_size_input", DEFAULT_IMU_FILTER_BUFFER_SIZE, 1, 16);
+}
+
+function imu_pitch_deadzone_onchange() {
+    config['imu_pitch_deadzone'] = clamp_number_input("imu_pitch_deadzone_input", DEFAULT_IMU_DEADZONE, 0, 90);
+}
+
+function imu_roll_deadzone_onchange() {
+    config['imu_roll_deadzone'] = clamp_number_input("imu_roll_deadzone_input", DEFAULT_IMU_DEADZONE, 0, 90);
+}
+
+function imu_yaw_deadzone_onchange() {
+    config['imu_yaw_deadzone'] = clamp_number_input("imu_yaw_deadzone_input", DEFAULT_IMU_DEADZONE, 0, 90);
+}
+
+function imu_pitch_pos_max_angle_onchange() {
+    config['imu_pitch_pos_max_angle'] = clamp_number_input("imu_pitch_pos_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_pitch_neg_max_angle_onchange() {
+    config['imu_pitch_neg_max_angle'] = clamp_number_input("imu_pitch_neg_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_roll_pos_max_angle_onchange() {
+    config['imu_roll_pos_max_angle'] = clamp_number_input("imu_roll_pos_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_roll_neg_max_angle_onchange() {
+    config['imu_roll_neg_max_angle'] = clamp_number_input("imu_roll_neg_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_yaw_pos_max_angle_onchange() {
+    config['imu_yaw_pos_max_angle'] = clamp_number_input("imu_yaw_pos_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_yaw_neg_max_angle_onchange() {
+    config['imu_yaw_neg_max_angle'] = clamp_number_input("imu_yaw_neg_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
 }
 
 function imu_roll_inverted_onchange() {
@@ -1624,6 +1785,9 @@ function device_buttons_set_disabled_state(state) {
     document.getElementById("save_to_device").disabled = state;
     document.getElementById("flash_firmware").disabled = state;
     document.getElementById("flash_b_side").disabled = state;
+    document.getElementById("recenter_imu_button").disabled = state;
+    document.getElementById("pause_imu_button").disabled = state;
+    document.getElementById("resume_imu_button").disabled = state;
 }
 
 function bluetooth_buttons_set_state(state) {
@@ -1642,7 +1806,7 @@ function bluetooth_buttons_set_state(state) {
         status.textContent = message;
     } else if (state === "nus_only") {
         status.className = "alert alert-info mt-2";
-        status.textContent = "This Pico W / Pico 2 W firmware supports Web Bluetooth NUS input only. Physical BLE gamepad pairing requires an nRF52840 board (Feather or Xiao). Use the NUS tester below.";
+        status.textContent = "This Pico W / Pico 2 W firmware supports Web Bluetooth NUS input only. Physical BLE gamepad pairing requires an nRF52840 board (Feather or Xiao). Tick Show floating NUS tester in this tab to use NUS input.";
     } else if (state === "non_bluetooth") {
         status.className = "alert alert-warning mt-2";
         status.textContent = "This device does not appear to support BLE gamepad pairing. Flash remapper_bluetooth_pico_w.uf2 or remapper_bluetooth_pico2_w.uf2 from the latest release.";

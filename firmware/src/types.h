@@ -32,7 +32,17 @@ enum class ConfigCommand : int8_t {
     CLEAR_QUIRKS = 23,
     ADD_QUIRK = 24,
     GET_QUIRK = 25,
+    SET_SENSOR_CONFIG = 26,
+    GET_SENSOR_CONFIG = 27,
+    RECENTER_IMU = 28,
+    PAUSE_IMU = 29,
+    RESUME_IMU = 30,
 };
+
+#define SENSOR_CONFIG_FLAG_ENABLE 0x01
+#define SENSOR_CONFIG_FLAG_INVERT_ROLL 0x02
+#define SENSOR_CONFIG_FLAG_INVERT_PITCH 0x04
+#define SENSOR_CONFIG_FLAG_INVERT_YAW 0x08
 
 struct usage_def_t {
     uint8_t report_id;
@@ -196,7 +206,7 @@ struct register_ptrs_t {
 struct __attribute__((packed)) set_feature_t {
     uint8_t version;
     ConfigCommand command;
-    uint8_t data[26];
+    uint8_t data[30];
     uint32_t crc32;
 };
 
@@ -342,14 +352,24 @@ struct __attribute__((packed)) persist_config_v20_t {
     uint8_t our_descriptor_number;
     uint8_t macro_entry_duration;
     uint16_t quirk_count;
-    uint8_t imu_angle_clamp_limit;
-    uint8_t imu_filter_buffer_size;
-    uint8_t imu_roll_inverted;
-    uint8_t imu_pitch_inverted;
-    uint8_t imu_yaw_inverted;
 };
 
 typedef persist_config_v20_t persist_config_t;
+
+struct __attribute__((packed)) sensor_config_t {
+    uint8_t flags;
+    uint8_t imu_filter_buffer_size;
+    uint8_t imu_pitch_deadzone;
+    uint8_t imu_roll_deadzone;
+    uint8_t imu_yaw_deadzone;
+    uint8_t imu_pitch_pos_max_angle;
+    uint8_t imu_pitch_neg_max_angle;
+    uint8_t imu_roll_pos_max_angle;
+    uint8_t imu_roll_neg_max_angle;
+    uint8_t imu_yaw_pos_max_angle;
+    uint8_t imu_yaw_neg_max_angle;
+    uint8_t reserved0;
+};
 
 struct __attribute__((packed)) get_config_t {
     uint8_t version;
@@ -365,11 +385,6 @@ struct __attribute__((packed)) get_config_t {
     uint8_t our_descriptor_number;
     uint8_t macro_entry_duration;
     uint16_t quirk_count;
-    uint8_t imu_angle_clamp_limit;
-    uint8_t imu_filter_buffer_size;
-    uint8_t imu_roll_inverted;
-    uint8_t imu_pitch_inverted;
-    uint8_t imu_yaw_inverted;
 };
 
 struct __attribute__((packed)) set_config_t {
@@ -381,12 +396,13 @@ struct __attribute__((packed)) set_config_t {
     uint8_t gpio_debounce_time_ms;
     uint8_t our_descriptor_number;
     uint8_t macro_entry_duration;
-    uint8_t imu_angle_clamp_limit;
-    uint8_t imu_filter_buffer_size;
-    uint8_t imu_roll_inverted;
-    uint8_t imu_pitch_inverted;
-    uint8_t imu_yaw_inverted;
 };
+
+static_assert(sizeof(persist_config_v20_t) == 19, "persist_config_v20_t layout changed");
+static_assert(sizeof(sensor_config_t) == 12, "sensor_config_t layout changed");
+static_assert(sizeof(get_config_t) <= 32, "get_config_t exceeds feature report payload");
+static_assert(sizeof(set_config_t) <= 30, "set_config_t exceeds feature report payload");
+static_assert(sizeof(sensor_config_t) <= 30, "sensor_config_t exceeds feature report payload");
 
 struct __attribute__((packed)) get_indexed_t {
     uint32_t requested_index;

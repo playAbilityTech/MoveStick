@@ -24,6 +24,105 @@ ConfigCommand last_config_command = ConfigCommand::NO_COMMAND;
 uint32_t requested_index = 0;
 uint32_t requested_secondary_index = 0;
 
+static const uint8_t DEFAULT_IMU_FILTER_BUFFER_SIZE = 10;
+static const uint8_t DEFAULT_IMU_MAX_ANGLE = 45;
+
+static uint8_t clamp_u8(uint8_t value, uint8_t min_value, uint8_t max_value) {
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static void set_all_imu_max_angles(uint8_t value) {
+    uint8_t angle = clamp_u8(value, 1, 90);
+    imu_pitch_pos_max_angle = angle;
+    imu_pitch_neg_max_angle = angle;
+    imu_roll_pos_max_angle = angle;
+    imu_roll_neg_max_angle = angle;
+    imu_yaw_pos_max_angle = angle;
+    imu_yaw_neg_max_angle = angle;
+}
+
+static void set_default_sensor_config() {
+    imu_enabled = false;
+    imu_filter_buffer_size = DEFAULT_IMU_FILTER_BUFFER_SIZE;
+    imu_pitch_deadzone = 0;
+    imu_roll_deadzone = 0;
+    imu_yaw_deadzone = 0;
+    set_all_imu_max_angles(DEFAULT_IMU_MAX_ANGLE);
+    imu_roll_inverted = false;
+    imu_pitch_inverted = false;
+    imu_yaw_inverted = false;
+}
+
+static void normalize_sensor_config() {
+    imu_filter_buffer_size = clamp_u8(imu_filter_buffer_size, 1, 16);
+    imu_pitch_deadzone = clamp_u8(imu_pitch_deadzone, 0, 90);
+    imu_roll_deadzone = clamp_u8(imu_roll_deadzone, 0, 90);
+    imu_yaw_deadzone = clamp_u8(imu_yaw_deadzone, 0, 90);
+    imu_pitch_pos_max_angle = clamp_u8(imu_pitch_pos_max_angle, 1, 90);
+    imu_pitch_neg_max_angle = clamp_u8(imu_pitch_neg_max_angle, 1, 90);
+    imu_roll_pos_max_angle = clamp_u8(imu_roll_pos_max_angle, 1, 90);
+    imu_roll_neg_max_angle = clamp_u8(imu_roll_neg_max_angle, 1, 90);
+    imu_yaw_pos_max_angle = clamp_u8(imu_yaw_pos_max_angle, 1, 90);
+    imu_yaw_neg_max_angle = clamp_u8(imu_yaw_neg_max_angle, 1, 90);
+}
+
+static void fill_sensor_config(sensor_config_t* config) {
+    normalize_sensor_config();
+    memset(config, 0, sizeof(sensor_config_t));
+    config->flags = 0;
+    config->flags |= imu_enabled ? SENSOR_CONFIG_FLAG_ENABLE : 0;
+    config->flags |= imu_roll_inverted ? SENSOR_CONFIG_FLAG_INVERT_ROLL : 0;
+    config->flags |= imu_pitch_inverted ? SENSOR_CONFIG_FLAG_INVERT_PITCH : 0;
+    config->flags |= imu_yaw_inverted ? SENSOR_CONFIG_FLAG_INVERT_YAW : 0;
+    config->imu_filter_buffer_size = imu_filter_buffer_size;
+    config->imu_pitch_deadzone = imu_pitch_deadzone;
+    config->imu_roll_deadzone = imu_roll_deadzone;
+    config->imu_yaw_deadzone = imu_yaw_deadzone;
+    config->imu_pitch_pos_max_angle = imu_pitch_pos_max_angle;
+    config->imu_pitch_neg_max_angle = imu_pitch_neg_max_angle;
+    config->imu_roll_pos_max_angle = imu_roll_pos_max_angle;
+    config->imu_roll_neg_max_angle = imu_roll_neg_max_angle;
+    config->imu_yaw_pos_max_angle = imu_yaw_pos_max_angle;
+    config->imu_yaw_neg_max_angle = imu_yaw_neg_max_angle;
+}
+
+static void apply_sensor_config(const sensor_config_t* config) {
+    imu_enabled = !!(config->flags & SENSOR_CONFIG_FLAG_ENABLE);
+    imu_roll_inverted = !!(config->flags & SENSOR_CONFIG_FLAG_INVERT_ROLL);
+    imu_pitch_inverted = !!(config->flags & SENSOR_CONFIG_FLAG_INVERT_PITCH);
+    imu_yaw_inverted = !!(config->flags & SENSOR_CONFIG_FLAG_INVERT_YAW);
+    imu_filter_buffer_size = config->imu_filter_buffer_size;
+    imu_pitch_deadzone = config->imu_pitch_deadzone;
+    imu_roll_deadzone = config->imu_roll_deadzone;
+    imu_yaw_deadzone = config->imu_yaw_deadzone;
+    imu_pitch_pos_max_angle = config->imu_pitch_pos_max_angle;
+    imu_pitch_neg_max_angle = config->imu_pitch_neg_max_angle;
+    imu_roll_pos_max_angle = config->imu_roll_pos_max_angle;
+    imu_roll_neg_max_angle = config->imu_roll_neg_max_angle;
+    imu_yaw_pos_max_angle = config->imu_yaw_pos_max_angle;
+    imu_yaw_neg_max_angle = config->imu_yaw_neg_max_angle;
+    normalize_sensor_config();
+}
+
+static void load_legacy_sensor_config(const persist_config_v19_t* config) {
+    imu_enabled = !!(config->flags & (1 << CONFIG_FLAG_IMU_ENABLE_BIT));
+    set_all_imu_max_angles(config->imu_angle_clamp_limit);
+    imu_filter_buffer_size = config->imu_filter_buffer_size;
+    imu_pitch_deadzone = 0;
+    imu_roll_deadzone = 0;
+    imu_yaw_deadzone = 0;
+    imu_roll_inverted = config->imu_roll_inverted;
+    imu_pitch_inverted = config->imu_pitch_inverted;
+    imu_yaw_inverted = false;
+    normalize_sensor_config();
+}
+
 bool checksum_ok(const uint8_t* buffer, uint16_t data_size) {
     return crc32(buffer, data_size - 4) == ((crc32_t*) (buffer + data_size - 4))->crc32;
 }
@@ -558,22 +657,12 @@ void load_config(const uint8_t* persisted_config) {
     }
 
     uint8_t version = ((config_version_t*) persisted_config)->version;
+    set_default_sensor_config();
 
     if (version < 18) {
         // Normalize gamepad inputs defaults to true, but if we're loading a <18 config,
         // set it to false to preserve previous behavior.
         normalize_gamepad_inputs = false;
-    }
-
-    if (version < 19) {
-        imu_angle_clamp_limit = 45;
-        imu_filter_buffer_size = 10;
-        imu_enabled = false;
-        imu_roll_inverted = false;
-        imu_pitch_inverted = false;
-    }
-    if (version < 20) {
-        imu_yaw_inverted = false;
     }
 
     if ((version == 3) || (version == 4)) {
@@ -630,13 +719,14 @@ void load_config(const uint8_t* persisted_config) {
         return;
     }
 
-    uint16_t persisted_config_header_size = version >= 20 ? sizeof(persist_config_v20_t) : sizeof(persist_config_v19_t);
+    uint16_t persisted_config_header_size = version >= 20 ?
+        sizeof(persist_config_v20_t) + sizeof(sensor_config_t) :
+        sizeof(persist_config_v19_t);
     persist_config_v20_t* config = (persist_config_v20_t*) persisted_config;
     unmapped_passthrough_layer_mask = config->unmapped_passthrough_layer_mask;
     ignore_auth_dev_inputs = config->flags & (1 << CONFIG_FLAG_IGNORE_AUTH_DEV_INPUTS_BIT);
     gpio_output_mode = !!(config->flags & (1 << CONFIG_FLAG_GPIO_OUTPUT_MODE_BIT));
     normalize_gamepad_inputs = !!(config->flags & (1 << CONFIG_FLAG_NORMALIZE_GAMEPAD_INPUTS_BIT));
-    imu_enabled = !!(config->flags & (1 << CONFIG_FLAG_IMU_ENABLE_BIT));
     partial_scroll_timeout = config->partial_scroll_timeout;
     tap_hold_threshold = config->tap_hold_threshold;
     gpio_debounce_time = config->gpio_debounce_time_ms * 1000;
@@ -646,23 +736,10 @@ void load_config(const uint8_t* persisted_config) {
         our_descriptor_number = 0;
     }
     macro_entry_duration = config->macro_entry_duration;
-    if (version >= 19) {
-        imu_angle_clamp_limit = config->imu_angle_clamp_limit;
-        if (imu_angle_clamp_limit > 90) {
-            imu_angle_clamp_limit = 90;
-        }
-        imu_filter_buffer_size = config->imu_filter_buffer_size;
-        if (imu_filter_buffer_size < 1) {
-            imu_filter_buffer_size = 1;
-        }
-        if (imu_filter_buffer_size > 16) {
-            imu_filter_buffer_size = 16;
-        }
-        imu_roll_inverted = config->imu_roll_inverted;
-        imu_pitch_inverted = config->imu_pitch_inverted;
-        if (version >= 20) {
-            imu_yaw_inverted = config->imu_yaw_inverted;
-        }
+    if (version >= 20) {
+        apply_sensor_config((sensor_config_t*) (persisted_config + sizeof(persist_config_v20_t)));
+    } else if (version >= 19) {
+        load_legacy_sensor_config((persist_config_v19_t*) persisted_config);
     }
     mapping_config11_t* buffer_mappings = (mapping_config11_t*) (persisted_config + persisted_config_header_size);
     for (uint32_t i = 0; i < config->mapping_count; i++) {
@@ -724,7 +801,6 @@ void fill_get_config(get_config_t* config) {
     config->flags |= ignore_auth_dev_inputs << CONFIG_FLAG_IGNORE_AUTH_DEV_INPUTS_BIT;
     config->flags |= gpio_output_mode << CONFIG_FLAG_GPIO_OUTPUT_MODE_BIT;
     config->flags |= normalize_gamepad_inputs << CONFIG_FLAG_NORMALIZE_GAMEPAD_INPUTS_BIT;
-    config->flags |= imu_enabled << CONFIG_FLAG_IMU_ENABLE_BIT;
     config->unmapped_passthrough_layer_mask = unmapped_passthrough_layer_mask;
     config->partial_scroll_timeout = partial_scroll_timeout;
     config->tap_hold_threshold = tap_hold_threshold;
@@ -735,11 +811,6 @@ void fill_get_config(get_config_t* config) {
     config->interval_override = interval_override;
     config->our_descriptor_number = our_descriptor_number;
     config->macro_entry_duration = macro_entry_duration;
-    config->imu_angle_clamp_limit = imu_angle_clamp_limit;
-    config->imu_filter_buffer_size = imu_filter_buffer_size;
-    config->imu_roll_inverted = imu_roll_inverted;
-    config->imu_pitch_inverted = imu_pitch_inverted;
-    config->imu_yaw_inverted = imu_yaw_inverted;
     my_mutex_enter(MutexId::QUIRKS);
     config->quirk_count = quirks.size();
     my_mutex_exit(MutexId::QUIRKS);
@@ -751,7 +822,6 @@ void fill_persist_config(persist_config_t* config) {
     config->flags |= ignore_auth_dev_inputs << CONFIG_FLAG_IGNORE_AUTH_DEV_INPUTS_BIT;
     config->flags |= gpio_output_mode << CONFIG_FLAG_GPIO_OUTPUT_MODE_BIT;
     config->flags |= normalize_gamepad_inputs << CONFIG_FLAG_NORMALIZE_GAMEPAD_INPUTS_BIT;
-    config->flags |= imu_enabled << CONFIG_FLAG_IMU_ENABLE_BIT;
     config->unmapped_passthrough_layer_mask = unmapped_passthrough_layer_mask;
     config->partial_scroll_timeout = partial_scroll_timeout;
     config->tap_hold_threshold = tap_hold_threshold;
@@ -760,11 +830,6 @@ void fill_persist_config(persist_config_t* config) {
     config->interval_override = interval_override;
     config->our_descriptor_number = our_descriptor_number;
     config->macro_entry_duration = macro_entry_duration;
-    config->imu_angle_clamp_limit = imu_angle_clamp_limit;
-    config->imu_filter_buffer_size = imu_filter_buffer_size;
-    config->imu_roll_inverted = imu_roll_inverted;
-    config->imu_pitch_inverted = imu_pitch_inverted;
-    config->imu_yaw_inverted = imu_yaw_inverted;
     my_mutex_enter(MutexId::QUIRKS);
     config->quirk_count = quirks.size();
     my_mutex_exit(MutexId::QUIRKS);
@@ -777,10 +842,13 @@ PersistConfigReturnCode persist_config() {
 
     persist_config_t* config = (persist_config_t*) buffer;
     fill_persist_config(config);
+    sensor_config_t* sensor_config = (sensor_config_t*) (buffer + sizeof(persist_config_t));
+    fill_sensor_config(sensor_config);
 
     // check if persisted config will fit in the space we have reserved for it in flash
     int32_t real_persisted_config_size = 0;
     real_persisted_config_size += sizeof(persist_config_t);
+    real_persisted_config_size += sizeof(sensor_config_t);
     real_persisted_config_size += config->mapping_count * sizeof(mapping_config11_t);
     my_mutex_enter(MutexId::MACROS);
     for (int i = 0; i < NMACROS; i++) {
@@ -810,12 +878,13 @@ PersistConfigReturnCode persist_config() {
         return PersistConfigReturnCode::CONFIG_TOO_BIG;
     }
 
-    mapping_config11_t* buffer_mappings = (mapping_config11_t*) (buffer + sizeof(persist_config_t));
+    uint8_t* variable_config_ptr = buffer + sizeof(persist_config_t) + sizeof(sensor_config_t);
+    mapping_config11_t* buffer_mappings = (mapping_config11_t*) variable_config_ptr;
     for (uint32_t i = 0; i < config->mapping_count; i++) {
         buffer_mappings[i] = config_mappings[i];
     }
 
-    uint8_t* macros_config_ptr = (buffer + sizeof(persist_config_t) + config->mapping_count * sizeof(mapping_config11_t));
+    uint8_t* macros_config_ptr = variable_config_ptr + config->mapping_count * sizeof(mapping_config11_t);
     my_mutex_enter(MutexId::MACROS);
     for (int i = 0; i < NMACROS; i++) {
         *macros_config_ptr = macros[i].size();
@@ -882,6 +951,10 @@ uint16_t handle_get_report1(uint8_t report_id, uint8_t* buffer, uint16_t reqlen)
             }
             case ConfigCommand::GET_CONFIG: {
                 fill_get_config((get_config_t*) config_buffer);
+                break;
+            }
+            case ConfigCommand::GET_SENSOR_CONFIG: {
+                fill_sensor_config((sensor_config_t*) config_buffer);
                 break;
             }
             case ConfigCommand::GET_MAPPING: {
@@ -1017,7 +1090,6 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     ignore_auth_dev_inputs = config->flags & (1 << CONFIG_FLAG_IGNORE_AUTH_DEV_INPUTS_BIT);
                     gpio_output_mode = !!(config->flags & (1 << CONFIG_FLAG_GPIO_OUTPUT_MODE_BIT));
                     normalize_gamepad_inputs = !!(config->flags & (1 << CONFIG_FLAG_NORMALIZE_GAMEPAD_INPUTS_BIT));
-                    imu_enabled = !!(config->flags & (1 << CONFIG_FLAG_IMU_ENABLE_BIT));
                     partial_scroll_timeout = config->partial_scroll_timeout;
                     tap_hold_threshold = config->tap_hold_threshold;
                     gpio_debounce_time = config->gpio_debounce_time_ms * 1000;
@@ -1031,23 +1103,14 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                         our_descriptor_number = 0;
                     }
                     macro_entry_duration = config->macro_entry_duration;
-                    imu_angle_clamp_limit = config->imu_angle_clamp_limit;
-                    if (imu_angle_clamp_limit > 90) {
-                        imu_angle_clamp_limit = 90;
-                    }
-                    imu_filter_buffer_size = config->imu_filter_buffer_size;
-                    if (imu_filter_buffer_size < 1) {
-                        imu_filter_buffer_size = 1;
-                    }
-                    if (imu_filter_buffer_size > 16) {
-                        imu_filter_buffer_size = 16;
-                    }
-                    imu_roll_inverted = config->imu_roll_inverted;
-                    imu_pitch_inverted = config->imu_pitch_inverted;
-                    imu_yaw_inverted = config->imu_yaw_inverted;
+                    break;
+                }
+                case ConfigCommand::SET_SENSOR_CONFIG: {
+                    apply_sensor_config((sensor_config_t*) config_buffer->data);
                     break;
                 }
                 case ConfigCommand::GET_CONFIG:
+                case ConfigCommand::GET_SENSOR_CONFIG:
                     break;
                 case ConfigCommand::CLEAR_MAPPING:
                     config_mappings.clear();
@@ -1085,6 +1148,15 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                     break;
                 case ConfigCommand::FLASH_B_SIDE:
                     flash_b_side();
+                    break;
+                case ConfigCommand::RECENTER_IMU:
+                    recenter_imu();
+                    break;
+                case ConfigCommand::PAUSE_IMU:
+                    pause_imu();
+                    break;
+                case ConfigCommand::RESUME_IMU:
+                    resume_imu();
                     break;
                 case ConfigCommand::CLEAR_MACROS:
                     my_mutex_enter(MutexId::MACROS);

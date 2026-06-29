@@ -10,6 +10,9 @@ const SLIP_END = 0xc0;
 const SLIP_ESC = 0xdb;
 const SLIP_ESC_END = 0xdc;
 const SLIP_ESC_ESC = 0xdd;
+const NUS_TESTER_ENABLED_STORAGE_KEY = "hid-remapper-nus-tester-enabled";
+
+setupFloatingTester();
 
 const statusEl = document.getElementById("nus_status");
 const connectButton = document.getElementById("nus_connect");
@@ -25,6 +28,93 @@ let report = neutralReport();
 let encryptedLinkReady = false;
 let reportDirty = false;
 let writeInFlight = false;
+
+function setupFloatingTester() {
+    const bluetoothTab = document.getElementById("nav-bluetooth");
+    if (!bluetoothTab) {
+        return;
+    }
+
+    const heading = Array.from(bluetoothTab.querySelectorAll("h5"))
+        .find((element) => element.textContent.trim() === "NUS tester");
+    if (!heading || document.getElementById("nus_tester_floating")) {
+        return;
+    }
+
+    const floating = document.createElement("div");
+    floating.id = "nus_tester_floating";
+    floating.className = "nus-floating";
+
+    const panel = document.createElement("div");
+    panel.id = "nus_tester_panel";
+    panel.className = "nus-floating-panel bg-white border rounded shadow";
+
+    const panelHeader = document.createElement("div");
+    panelHeader.className = "d-flex align-items-center justify-content-between border-bottom px-3 py-2";
+
+    const panelTitle = document.createElement("h5");
+    panelTitle.className = "m-0";
+    panelTitle.textContent = "NUS tester";
+
+    const closeButton = document.createElement("button");
+    closeButton.id = "nus_tester_close";
+    closeButton.type = "button";
+    closeButton.className = "btn-close";
+    closeButton.setAttribute("aria-label", "Hide NUS tester");
+
+    const panelBody = document.createElement("div");
+    panelBody.className = "p-3";
+
+    panelHeader.append(panelTitle, closeButton);
+    panel.append(panelHeader, panelBody);
+    floating.append(panel);
+
+    let node = heading.nextSibling;
+    heading.remove();
+    while (node) {
+        const nextNode = node.nextSibling;
+        panelBody.appendChild(node);
+        node = nextNode;
+    }
+
+    const intro = panelBody.querySelector("p.text-muted");
+    if (intro) {
+        intro.classList.add("small", "mb-3");
+    }
+
+    for (const button of panelBody.querySelectorAll(".btn")) {
+        button.classList.add("btn-sm");
+    }
+
+    const status = panelBody.querySelector("#nus_status");
+    if (status) {
+        status.classList.add("small", "mb-0");
+    }
+
+    document.body.appendChild(floating);
+
+    const enabledCheckbox = document.getElementById("nus_tester_enabled");
+    const setEnabled = (enabled) => {
+        floating.classList.toggle("d-none", !enabled);
+        if (enabledCheckbox) {
+            enabledCheckbox.checked = enabled;
+        }
+        try {
+            localStorage.setItem(NUS_TESTER_ENABLED_STORAGE_KEY, enabled ? "1" : "0");
+        } catch {
+        }
+    };
+
+    let startEnabled = false;
+    try {
+        startEnabled = localStorage.getItem(NUS_TESTER_ENABLED_STORAGE_KEY) === "1";
+    } catch {
+    }
+
+    enabledCheckbox?.addEventListener("change", () => setEnabled(enabledCheckbox.checked));
+    closeButton.addEventListener("click", () => setEnabled(false));
+    setEnabled(startEnabled);
+}
 
 function setStatus(message) {
     statusEl.textContent = message;
