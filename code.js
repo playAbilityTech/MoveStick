@@ -741,12 +741,83 @@ function set_expressions_ui_state() {
     }
 }
 
+function default_layer_list() {
+    return Array.from({ length: NLAYERS }, (_, i) => i);
+}
+
+function normalize_config_shape() {
+    if (!Array.isArray(config['mappings'])) {
+        config['mappings'] = [];
+    }
+    if (!Array.isArray(config['macros'])) {
+        config['macros'] = [];
+    }
+    if (!Array.isArray(config['expressions'])) {
+        config['expressions'] = [];
+    }
+    if (!Array.isArray(config['quirks'])) {
+        config['quirks'] = [];
+    }
+    if (!Array.isArray(config['unmapped_passthrough_layers'])) {
+        config['unmapped_passthrough_layers'] = default_layer_list();
+    }
+
+    config['partial_scroll_timeout'] = config['partial_scroll_timeout'] ?? DEFAULT_PARTIAL_SCROLL_TIMEOUT;
+    config['tap_hold_threshold'] = config['tap_hold_threshold'] ?? DEFAULT_TAP_HOLD_THRESHOLD;
+    config['gpio_debounce_time_ms'] = config['gpio_debounce_time_ms'] ?? DEFAULT_GPIO_DEBOUNCE_TIME;
+    config['interval_override'] = config['interval_override'] ?? 0;
+    config['our_descriptor_number'] = config['our_descriptor_number'] ?? 0;
+    config['ignore_auth_dev_inputs'] = config['ignore_auth_dev_inputs'] ?? false;
+    config['macro_entry_duration'] = config['macro_entry_duration'] ?? DEFAULT_MACRO_ENTRY_DURATION;
+    config['gpio_output_mode'] = config['gpio_output_mode'] ?? 0;
+    config['input_labels'] = config['input_labels'] ?? 0;
+    config['normalize_gamepad_inputs'] = config['normalize_gamepad_inputs'] ?? true;
+    config['imu_enabled'] = config['imu_enabled'] ?? false;
+    config['imu_angle_clamp_limit'] = config['imu_angle_clamp_limit'] ?? DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
+    config['imu_filter_buffer_size'] = config['imu_filter_buffer_size'] ?? DEFAULT_IMU_FILTER_BUFFER_SIZE;
+    config['imu_roll_inverted'] = config['imu_roll_inverted'] ?? false;
+    config['imu_pitch_inverted'] = config['imu_pitch_inverted'] ?? false;
+
+    for (let i = 0; i < config['mappings'].length; i++) {
+        if ((config['mappings'][i] == null) || (typeof config['mappings'][i] != 'object')) {
+            config['mappings'][i] = {};
+        }
+        const mapping = config['mappings'][i];
+        mapping['source_usage'] = mapping['source_usage'] ?? '0x00000000';
+        mapping['target_usage'] = mapping['target_usage'] ?? '0x00000000';
+        mapping['scaling'] = mapping['scaling'] ?? DEFAULT_SCALING;
+        mapping['layers'] = Array.isArray(mapping['layers']) ? mapping['layers'] : [mapping['layer'] ?? 0];
+        mapping['sticky'] = mapping['sticky'] ?? false;
+        mapping['tap'] = mapping['tap'] ?? false;
+        mapping['hold'] = mapping['hold'] ?? false;
+        mapping['source_port'] = mapping['source_port'] ?? 0;
+        mapping['target_port'] = mapping['target_port'] ?? 0;
+    }
+
+    for (let i = 0; i < config['macros'].length; i++) {
+        config['macros'][i] = Array.isArray(config['macros'][i]) ? config['macros'][i] : [];
+        config['macros'][i] = config['macros'][i].filter(entry => Array.isArray(entry));
+    }
+    while (config['macros'].length < NMACROS) {
+        config['macros'].push([]);
+    }
+
+    for (let i = 0; i < config['expressions'].length; i++) {
+        config['expressions'][i] = typeof config['expressions'][i] == 'string' ? config['expressions'][i] : '';
+    }
+    while (config['expressions'].length < NEXPRESSIONS) {
+        config['expressions'].push('');
+    }
+}
+
 function set_ui_state() {
+    normalize_config_shape();
+
     if (config['version'] == 3) {
-        config['unmapped_passthrough_layers'] = config['unmapped_passthrough'] ? [0] : [];
+        config['unmapped_passthrough_layers'] = (config['unmapped_passthrough'] ?? true) ? [0] : [];
         delete config['unmapped_passthrough'];
         for (const mapping of config['mappings']) {
-            mapping['layers'] = [mapping['layer']];
+            mapping['layers'] = [mapping['layer'] ?? 0];
             delete mapping['layer'];
         }
         config['macros'] = [[], [], [], [], [], [], [], []];
@@ -1022,7 +1093,7 @@ function add_crc(data) {
 }
 
 function check_json_version(config_version) {
-    if (!([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(config_version))) {
+    if (!Number.isInteger(config_version) || (config_version < 3) || (config_version > CONFIG_VERSION)) {
         throw new Error("Incompatible version.");
     }
 }
