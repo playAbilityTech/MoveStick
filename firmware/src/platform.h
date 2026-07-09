@@ -13,6 +13,7 @@ void flash_b_side();
 void recenter_imu();
 void pause_imu();
 void resume_imu();
+bool get_ble_peer_info(uint32_t index, uint32_t name_offset, ble_peer_info_t* peer_info);
 
 void my_mutexes_init();
 void my_mutex_enter(MutexId id);

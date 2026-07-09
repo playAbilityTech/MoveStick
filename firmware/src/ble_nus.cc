@@ -18,7 +18,12 @@ extern "C" {
 
 static nus_decoder_t nus_decoder;
 static hci_con_handle_t nus_conn = HCI_CON_HANDLE_INVALID;
+static hci_con_handle_t nus_gap_conn = HCI_CON_HANDLE_INVALID;
+static bool nus_addr_known = false;
+static uint8_t nus_addr_type = 0;
+static bd_addr_t nus_addr;
 static bool nus_advertising = false;
+static btstack_packet_callback_registration_t nus_hci_event_callback_registration;
 
 static uint8_t adv_data[] = {
     0x02, 0x01, 0x06,
@@ -57,6 +62,16 @@ static void nus_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t* p
     }
 
     switch (hci_event_packet_get_type(packet)) {
+        case HCI_EVENT_LE_META:
+            if (hci_event_le_meta_get_subevent_code(packet) == HCI_SUBEVENT_LE_CONNECTION_COMPLETE &&
+                hci_subevent_le_connection_complete_get_status(packet) == 0 &&
+                hci_subevent_le_connection_complete_get_role(packet) == 1) {
+                nus_gap_conn = hci_subevent_le_connection_complete_get_connection_handle(packet);
+                nus_addr_type = hci_subevent_le_connection_complete_get_peer_address_type(packet);
+                hci_subevent_le_connection_complete_get_peer_address(packet, nus_addr);
+                nus_addr_known = true;
+            }
+            break;
         case HCI_EVENT_GATTSERVICE_META:
             switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
                 case GATTSERVICE_SUBEVENT_SPP_SERVICE_CONNECTED:
@@ -80,6 +95,10 @@ static void nus_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t* p
                 nus_decoder_reset(&nus_decoder);
                 ble_nus_start_advertising();
             }
+            if (nus_gap_conn == hci_event_disconnection_complete_get_connection_handle(packet)) {
+                nus_gap_conn = HCI_CON_HANDLE_INVALID;
+                nus_addr_known = false;
+            }
             break;
         default:
             break;
@@ -89,6 +108,8 @@ static void nus_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t* p
 void ble_nus_init(void) {
     nus_decoder_init(&nus_decoder);
     nordic_spp_service_server_init(nus_packet_handler);
+    nus_hci_event_callback_registration.callback = &nus_packet_handler;
+    hci_add_event_handler(&nus_hci_event_callback_registration);
     nus_init_virtual_device();
     ble_nus_start_advertising();
 }
@@ -124,4 +145,31 @@ bool ble_nus_is_peripheral_connection(uint8_t packet_type, uint8_t* packet, uint
         return false;
     }
     return hci_subevent_le_connection_complete_get_role(packet) == 1;
+}
+
+bool ble_nus_get_peer_info(ble_peer_info_t* peer_info, uint32_t name_offset) {
+    (void) name_offset;
+
+    if (nus_conn == HCI_CON_HANDLE_INVALID && nus_gap_conn == HCI_CON_HANDLE_INVALID) {
+        return false;
+    }
+
+    memset(peer_info, 0, sizeof(*peer_info));
+    peer_info->present = 1;
+    peer_info->total_count = 1;
+    peer_info->kind = BlePeerKind::NUS;
+    peer_info->flags = BLE_PEER_FLAG_CONNECTED;
+    hci_con_handle_t conn = nus_conn != HCI_CON_HANDLE_INVALID ? nus_conn : nus_gap_conn;
+    if (gap_bonded(conn)) {
+        peer_info->flags |= BLE_PEER_FLAG_BONDED;
+    }
+    if (gap_security_level(conn) >= LEVEL_2) {
+        peer_info->flags |= BLE_PEER_FLAG_ENCRYPTED;
+    }
+    if (nus_addr_known) {
+        peer_info->addr_type = nus_addr_type;
+        memcpy(peer_info->addr, nus_addr, sizeof(peer_info->addr));
+    }
+    peer_info->port = 0xFF;
+    return true;
 }

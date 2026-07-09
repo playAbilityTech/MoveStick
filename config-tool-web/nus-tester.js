@@ -2,6 +2,7 @@ import crc32 from "./crc.js";
 
 const NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_DEVICE_NAME_PREFIXES = ["HID Remapper", "PlayAbility"];
 
 const NUS_PROTOCOL_VERSION = 1;
 const NUS_REPORT_ID = 1;
@@ -11,12 +12,12 @@ const SLIP_ESC = 0xdb;
 const SLIP_ESC_END = 0xdc;
 const SLIP_ESC_ESC = 0xdd;
 const NUS_TESTER_ENABLED_STORAGE_KEY = "hid-remapper-nus-tester-enabled";
+const DESCRIPTOR_CHANGED_EVENT = "hid-remapper-descriptor-changed";
 
 setupFloatingTester();
 
 const statusEl = document.getElementById("nus_status");
 const connectButton = document.getElementById("nus_connect");
-const connectFilteredButton = document.getElementById("nus_connect_filtered");
 const disconnectButton = document.getElementById("nus_disconnect");
 const pairButton = document.getElementById("nus_pair");
 const descriptorSelect = document.getElementById("nus_descriptor");
@@ -29,15 +30,28 @@ let encryptedLinkReady = false;
 let reportDirty = false;
 let writeInFlight = false;
 
-function setupFloatingTester() {
-    const bluetoothTab = document.getElementById("nav-bluetooth");
-    if (!bluetoothTab) {
+function syncDescriptorFromSettings(descriptorNumber) {
+    const settingsDescriptorSelect = document.getElementById("our_descriptor_number_dropdown");
+    if (settingsDescriptorSelect) {
+        const options = Array.from(settingsDescriptorSelect.options, (option) => option.cloneNode(true));
+        descriptorSelect.replaceChildren(...options);
+        descriptorSelect.value = settingsDescriptorSelect.value;
         return;
     }
 
-    const heading = Array.from(bluetoothTab.querySelectorAll("h5"))
-        .find((element) => element.textContent.trim() === "NUS tester");
-    if (!heading || document.getElementById("nus_tester_floating")) {
+    if (descriptorNumber !== undefined) {
+        descriptorSelect.value = String(descriptorNumber);
+    }
+}
+
+document.addEventListener(DESCRIPTOR_CHANGED_EVENT, (event) => {
+    syncDescriptorFromSettings(event.detail?.descriptorNumber);
+});
+syncDescriptorFromSettings();
+
+function setupFloatingTester() {
+    const tester = document.getElementById("nus_tester_inline");
+    if (!tester || document.getElementById("nus_tester_floating")) {
         return;
     }
 
@@ -69,13 +83,12 @@ function setupFloatingTester() {
     panel.append(panelHeader, panelBody);
     floating.append(panel);
 
-    let node = heading.nextSibling;
-    heading.remove();
-    while (node) {
-        const nextNode = node.nextSibling;
-        panelBody.appendChild(node);
-        node = nextNode;
+    const inlineTitle = tester.querySelector("h6");
+    if (inlineTitle) {
+        inlineTitle.remove();
     }
+    tester.classList.remove("mt-3");
+    panelBody.appendChild(tester);
 
     const intro = panelBody.querySelector("p.text-muted");
     if (intro) {
@@ -126,7 +139,6 @@ function neutralReport() {
 
 function setConnectedState(connected) {
     connectButton.disabled = connected;
-    connectFilteredButton.disabled = connected;
     disconnectButton.disabled = !connected;
     pairButton.disabled = !connected;
 }
@@ -142,6 +154,14 @@ function formatWriteError(error) {
         return `${message}. Bluetooth access or pairing was cancelled.`;
     }
 
+    return message;
+}
+
+function formatConnectError(error) {
+    const message = error.message || String(error);
+    if (/connection attempt failed|gatt|networkerror|bluetooth device is no longer in range/i.test(message)) {
+        return `${message}. Reset the board, remove any stale OS Bluetooth pairing for HID Remapper or PlayAbility, then try Connect again.`;
+    }
     return message;
 }
 
@@ -258,6 +278,9 @@ async function connectWithOptions(options) {
         setStatus(`Selected ${device.name || device.id}; connecting GATT...`);
         device.addEventListener("gattserverdisconnected", onDisconnected);
 
+        if (device.gatt.connected) {
+            device.gatt.disconnect();
+        }
         server = await device.gatt.connect();
         setStatus(`Connected to ${device.name || device.id}; opening NUS service...`);
         const service = await server.getPrimaryService(NUS_SERVICE_UUID);
@@ -269,20 +292,20 @@ async function connectWithOptions(options) {
         notifyNusConnectionChanged(true);
         setStatus(`Connected to ${device.name || "HID Remapper"}. Use Pair / Send neutral to trigger encryption, then reports use fast writes.`);
     } catch (error) {
-        setStatus(error.message || String(error));
+        if (device?.gatt?.connected) {
+            device.gatt.disconnect();
+        }
+        rxCharacteristic = undefined;
+        server = undefined;
+        setConnectedState(false);
+        notifyNusConnectionChanged(false);
+        setStatus(formatConnectError(error));
     }
 }
 
 connectButton.addEventListener("click", async () => {
     await connectWithOptions({
-        acceptAllDevices: true,
-        optionalServices: [NUS_SERVICE_UUID],
-    });
-});
-
-connectFilteredButton.addEventListener("click", async () => {
-    await connectWithOptions({
-        filters: [{ services: [NUS_SERVICE_UUID] }],
+        filters: NUS_DEVICE_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
         optionalServices: [NUS_SERVICE_UUID],
     });
 });

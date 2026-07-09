@@ -37,6 +37,7 @@ enum class ConfigCommand : int8_t {
     RECENTER_IMU = 28,
     PAUSE_IMU = 29,
     RESUME_IMU = 30,
+    GET_BLE_PEER = 31,
 };
 
 #define SENSOR_CONFIG_FLAG_ENABLE 0x01
@@ -460,6 +461,11 @@ struct __attribute__((packed)) get_expr_t {
     uint32_t requested_expr_elem;
 };
 
+struct __attribute__((packed)) get_ble_peer_t {
+    uint32_t requested_peer;
+    uint32_t name_offset;
+};
+
 struct __attribute__((packed)) append_to_expr_t {
     uint8_t expr;
     uint8_t nelems;
@@ -495,6 +501,39 @@ struct __attribute__((packed)) monitor_report_t {
     uint8_t report_id;
     monitor_report_item_t items[7];
 };
+
+enum class BlePeerKind : uint8_t {
+    UNKNOWN = 0,
+    HID = 1,
+    NUS = 2,
+};
+
+#define BLE_PEER_FLAG_BONDED 0x01
+#define BLE_PEER_FLAG_CONNECTED 0x02
+#define BLE_PEER_FLAG_NAME_KNOWN 0x04
+#define BLE_PEER_FLAG_PNP_ID_KNOWN 0x08
+#define BLE_PEER_FLAG_ENCRYPTED 0x10
+
+#define BLE_PEER_NAME_CHUNK_SIZE 11
+
+struct __attribute__((packed)) ble_peer_info_t {
+    uint8_t present;
+    uint8_t total_count;
+    BlePeerKind kind;
+    uint8_t flags;
+    uint8_t addr_type;
+    uint8_t addr[6];
+    uint8_t port;
+    uint8_t vid_source;
+    uint16_t vid;
+    uint16_t pid;
+    uint16_t product_version;
+    uint8_t name_total_len;
+    uint8_t name_chunk_len;
+    char name_chunk[BLE_PEER_NAME_CHUNK_SIZE];
+};
+
+static_assert(sizeof(ble_peer_info_t) <= 32, "ble_peer_info_t exceeds feature report payload");
 
 struct __attribute__((packed)) uint16_val_t {
     uint16_t val;

@@ -24,6 +24,14 @@ ConfigCommand last_config_command = ConfigCommand::NO_COMMAND;
 uint32_t requested_index = 0;
 uint32_t requested_secondary_index = 0;
 
+__attribute__((weak)) bool get_ble_peer_info(uint32_t index, uint32_t name_offset, ble_peer_info_t* peer_info) {
+    (void) index;
+    (void) name_offset;
+    peer_info->present = 0;
+    peer_info->total_count = 0;
+    return true;
+}
+
 static const uint8_t DEFAULT_IMU_FILTER_BUFFER_SIZE = 10;
 static const uint8_t DEFAULT_IMU_MAX_ANGLE = 45;
 static const uint8_t DEFAULT_IMU_TWIST_DEADZONE = 2;
@@ -51,7 +59,7 @@ static void set_all_imu_max_angles(uint8_t value) {
 }
 
 static void set_default_sensor_config() {
-    imu_enabled = false;
+    imu_enabled = true;
     imu_filter_buffer_size = DEFAULT_IMU_FILTER_BUFFER_SIZE;
     imu_pitch_deadzone = 0;
     imu_roll_deadzone = 0;
@@ -1071,6 +1079,11 @@ uint16_t handle_get_report1(uint8_t report_id, uint8_t* buffer, uint16_t reqlen)
                 my_mutex_exit(MutexId::QUIRKS);
                 break;
             }
+            case ConfigCommand::GET_BLE_PEER: {
+                ble_peer_info_t* peer_info = (ble_peer_info_t*) config_buffer;
+                get_ble_peer_info(requested_index, requested_secondary_index, peer_info);
+                break;
+            }
             case ConfigCommand::PERSIST_CONFIG: {
                 persist_config_response_t* returned = (persist_config_response_t*) config_buffer;
                 if (persist_config_return_code == PersistConfigReturnCode::UNKNOWN) {
@@ -1144,6 +1157,12 @@ void handle_set_report1(uint8_t report_id, uint8_t const* buffer, uint16_t bufsi
                 case ConfigCommand::GET_QUIRK: {
                     get_indexed_t* get_indexed = (get_indexed_t*) config_buffer->data;
                     requested_index = get_indexed->requested_index;
+                    break;
+                }
+                case ConfigCommand::GET_BLE_PEER: {
+                    get_ble_peer_t* get_ble_peer = (get_ble_peer_t*) config_buffer->data;
+                    requested_index = get_ble_peer->requested_peer;
+                    requested_secondary_index = get_ble_peer->name_offset;
                     break;
                 }
                 case ConfigCommand::PERSIST_CONFIG:

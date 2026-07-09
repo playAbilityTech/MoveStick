@@ -746,14 +746,9 @@ static void imu_work_fn(struct k_work* work) {
         return;
     }
 
-    float yaw_rate_dps = compute_tilt_compensated_yaw_rate(roll, pitch, gy, gz) * RAD_TO_DEG;
-    if (!has_magnetometer) {
-        update_leaky_relative_yaw(yaw_rate_dps, dt);
-    }
-    
     float pitch_corrected = -(pitch - pitch_offset);
     float roll_corrected = roll - roll_offset;
-    float yaw_corrected = yaw_valid ? motion_fusion_wrap_angle_180(yaw - yaw_offset) : leaky_relative_yaw;
+    float yaw_rate_dps = -compute_tilt_compensated_yaw_rate(roll, pitch, gy, gz) * RAD_TO_DEG;
     float twist_rate_corrected = yaw_rate_dps;
     
     if (imu_pitch_inverted) {
@@ -763,18 +758,26 @@ static void imu_work_fn(struct k_work* work) {
         roll_corrected = -roll_corrected;
     }
     if (imu_yaw_inverted) {
-        yaw_corrected = -yaw_corrected;
         twist_rate_corrected = -twist_rate_corrected;
     }
     
     pitch_corrected = moving_avg_filter_update(&pitch_filter, pitch_corrected);
     roll_corrected = moving_avg_filter_update(&roll_filter, roll_corrected);
-    yaw_corrected = moving_avg_filter_update(&yaw_filter, yaw_corrected);
     twist_rate_corrected = moving_avg_filter_update(&twist_rate_filter, twist_rate_corrected);
     
     apply_tilt_deadzone(&pitch_corrected, &roll_corrected);
-    apply_yaw_deadzone(&yaw_corrected);
     apply_rate_deadzone(&twist_rate_corrected, imu_twist_deadzone);
+
+    if (!has_magnetometer) {
+        update_leaky_relative_yaw(twist_rate_corrected, dt);
+    }
+
+    float yaw_corrected = yaw_valid ? motion_fusion_wrap_angle_180(yaw_offset - yaw) : leaky_relative_yaw;
+    if (yaw_valid && imu_yaw_inverted) {
+        yaw_corrected = -yaw_corrected;
+    }
+    yaw_corrected = moving_avg_filter_update(&yaw_filter, yaw_corrected);
+    apply_yaw_deadzone(&yaw_corrected);
     
     yaw_corrected = clamp_angle_to_limits(yaw_corrected, imu_yaw_neg_max_angle, imu_yaw_pos_max_angle);
     pitch_corrected = clamp_angle_to_limits(pitch_corrected, imu_pitch_neg_max_angle, imu_pitch_pos_max_angle);

@@ -2,6 +2,7 @@ import crc32 from "../config-tool-web/crc.js";
 
 const NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_DEVICE_NAME_PREFIXES = ["HID Remapper", "PlayAbility"];
 
 const SLIP_END = 0xc0;
 const SLIP_ESC = 0xdb;
@@ -183,7 +184,7 @@ connectButton.addEventListener("click", async () => {
 
 connectFilteredButton.addEventListener("click", async () => {
     await connectWithOptions({
-        filters: [{ services: [NUS_SERVICE_UUID] }],
+        filters: NUS_DEVICE_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
         optionalServices: [NUS_SERVICE_UUID],
     });
 });

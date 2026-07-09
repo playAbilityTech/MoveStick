@@ -72,11 +72,24 @@ const GET_SENSOR_CONFIG = 27;
 const RECENTER_IMU = 28;
 const PAUSE_IMU = 29;
 const RESUME_IMU = 30;
+const GET_BLE_PEER = 31;
 
 const SENSOR_CONFIG_FLAG_ENABLE = 1 << 0;
 const SENSOR_CONFIG_FLAG_INVERT_ROLL = 1 << 1;
 const SENSOR_CONFIG_FLAG_INVERT_PITCH = 1 << 2;
 const SENSOR_CONFIG_FLAG_INVERT_YAW = 1 << 3;
+
+const BLE_PEER_KIND_UNKNOWN = 0;
+const BLE_PEER_KIND_HID = 1;
+const BLE_PEER_KIND_NUS = 2;
+const BLE_PEER_FLAG_BONDED = 1 << 0;
+const BLE_PEER_FLAG_CONNECTED = 1 << 1;
+const BLE_PEER_FLAG_NAME_KNOWN = 1 << 2;
+const BLE_PEER_FLAG_PNP_ID_KNOWN = 1 << 3;
+const BLE_PEER_FLAG_ENCRYPTED = 1 << 4;
+const BLE_PEER_NAME_CHUNK_SIZE = 11;
+const BLE_LABELS_STORAGE_KEY = "hid-remapper-ble-peer-labels-v1";
+const DESCRIPTOR_CHANGED_EVENT = "hid-remapper-descriptor-changed";
 
 const PERSIST_CONFIG_SUCCESS = 1;
 const PERSIST_CONFIG_CONFIG_TOO_BIG = 2;
@@ -165,7 +178,7 @@ let config = {
     'gpio_output_mode': 0,
     'input_labels': 0,
     'normalize_gamepad_inputs': true,
-    'imu_enabled': false,
+    'imu_enabled': true,
     'imu_filter_buffer_size': DEFAULT_IMU_FILTER_BUFFER_SIZE,
     'imu_pitch_deadzone': DEFAULT_IMU_DEADZONE,
     'imu_roll_deadzone': DEFAULT_IMU_DEADZONE,
@@ -225,6 +238,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("flash_b_side").addEventListener("click", flash_b_side);
     document.getElementById("pair_new_device").addEventListener("click", pair_new_device);
     document.getElementById("clear_bonds").addEventListener("click", clear_bonds);
+    document.getElementById("ble_devices_refresh").addEventListener("click", refresh_ble_devices);
     document.getElementById("monitor_clear").addEventListener("click", monitor_clear);
     document.getElementById("file_input").addEventListener("change", file_uploaded);
     document.getElementById("add_quirk").addEventListener("click", add_empty_quirk);
@@ -235,6 +249,9 @@ document.addEventListener("DOMContentLoaded", function () {
     document.addEventListener("nus-connection-changed", (event) => {
         nus_tester_connected = event.detail?.connected ?? false;
         update_bluetooth_buttons_state();
+        if (device != null) {
+            refresh_ble_devices();
+        }
     });
 
     document.getElementById("partial_scroll_timeout_input").addEventListener("change", partial_scroll_timeout_onchange);
@@ -320,6 +337,7 @@ async function open_device() {
                 await get_usages_from_device();
                 setup_usages_modals();
                 update_bluetooth_buttons_state();
+                await refresh_ble_devices();
             }
         }
     } catch (e) {
@@ -331,6 +349,7 @@ async function open_device() {
     if (!success) {
         device = null;
         update_bluetooth_buttons_state();
+        set_ble_devices_closed();
     }
 
     busy = false;
@@ -731,6 +750,9 @@ function set_config_ui_state() {
     }
     document.getElementById('interval_override_dropdown').value = config['interval_override'];
     document.getElementById('our_descriptor_number_dropdown').value = config['our_descriptor_number'];
+    document.dispatchEvent(new CustomEvent(DESCRIPTOR_CHANGED_EVENT, {
+        detail: { descriptorNumber: config['our_descriptor_number'] },
+    }));
     document.getElementById('ignore_auth_dev_inputs_checkbox').checked = config['ignore_auth_dev_inputs'];
     document.getElementById('macro_entry_duration_input').value = config['macro_entry_duration'];
     document.getElementById('gpio_output_mode_dropdown').value = config['gpio_output_mode'];
@@ -1114,11 +1136,13 @@ async function flash_b_side() {
 async function pair_new_device() {
     await send_feature_command(PAIR_NEW_DEVICE);
     set_ble_pairing_status("Command sent. The onboard LED should turn solid while scanning for new devices. Put your controller in pairing mode now.");
+    await refresh_ble_devices();
 }
 
 async function clear_bonds() {
     await send_feature_command(CLEAR_BONDS);
     set_ble_pairing_status("All paired devices forgotten. The onboard LED should turn solid while scanning for new devices.");
+    window.setTimeout(refresh_ble_devices, 750);
 }
 
 async function recenter_imu() {
@@ -1235,6 +1259,304 @@ async function read_config_feature(fields = []) {
         }
     }
     return ret;
+}
+
+async function read_config_feature_raw() {
+    let attempts_left = 10;
+    let delay = 2;
+    while (true) {
+        const data_with_report_id = await device.receiveFeatureReport(REPORT_ID_CONFIG);
+        const data = new DataView(data_with_report_id.buffer, 1);
+        if (data.byteLength > 0) {
+            check_crc(data);
+            return data;
+        }
+        if ((--attempts_left) <= 0) {
+            throw new Error('Error in read_config_feature_raw (given up retrying).');
+        }
+        await (new Promise(resolve => setTimeout(resolve, delay)));
+        delay *= 2;
+    }
+}
+
+function parse_ble_peer_info(data) {
+    let pos = 0;
+    const peer = {};
+    peer.present = data.getUint8(pos++);
+    peer.total_count = data.getUint8(pos++);
+    peer.kind = data.getUint8(pos++);
+    peer.flags = data.getUint8(pos++);
+    peer.addr_type = data.getUint8(pos++);
+    const addr_bytes = [];
+    for (let i = 0; i < 6; i++) {
+        addr_bytes.push(data.getUint8(pos++));
+    }
+    peer.address = addr_bytes.map((x) => x.toString(16).padStart(2, "0")).join(":");
+    peer.port = data.getUint8(pos++);
+    peer.vid_source = data.getUint8(pos++);
+    peer.vid = data.getUint16(pos, true);
+    pos += 2;
+    peer.pid = data.getUint16(pos, true);
+    pos += 2;
+    peer.product_version = data.getUint16(pos, true);
+    pos += 2;
+    peer.name_total_len = data.getUint8(pos++);
+    peer.name_chunk_len = data.getUint8(pos++);
+    peer.name_chunk = "";
+    for (let i = 0; i < Math.min(peer.name_chunk_len, BLE_PEER_NAME_CHUNK_SIZE); i++) {
+        peer.name_chunk += String.fromCharCode(data.getUint8(pos++));
+    }
+    return peer;
+}
+
+async function read_ble_peer(index, name_offset = 0) {
+    await send_feature_command(GET_BLE_PEER, [[UINT32, index], [UINT32, name_offset]]);
+    return parse_ble_peer_info(await read_config_feature_raw());
+}
+
+function ble_peer_is_unsupported(peer) {
+    return peer.present == 0xFF &&
+        peer.total_count == 0xFF &&
+        peer.kind == 0xFF &&
+        peer.flags == 0xFF;
+}
+
+async function get_ble_peer_with_name(index) {
+    const peer = await read_ble_peer(index, 0);
+    if (!peer.present || ble_peer_is_unsupported(peer)) {
+        return peer;
+    }
+
+    let name = peer.name_chunk;
+    while (name.length < peer.name_total_len) {
+        const chunk_peer = await read_ble_peer(index, name.length);
+        if (!chunk_peer.present || chunk_peer.name_chunk_len == 0) {
+            break;
+        }
+        name += chunk_peer.name_chunk;
+    }
+    peer.name = name.slice(0, peer.name_total_len);
+    return peer;
+}
+
+function load_ble_labels() {
+    try {
+        return JSON.parse(localStorage.getItem(BLE_LABELS_STORAGE_KEY) || "{}");
+    } catch (e) {
+        return {};
+    }
+}
+
+function save_ble_labels(labels) {
+    localStorage.setItem(BLE_LABELS_STORAGE_KEY, JSON.stringify(labels));
+}
+
+function ble_label_key(peer) {
+    return `${peer.addr_type}:${peer.address}`;
+}
+
+function ble_peer_state_text(peer) {
+    const states = [];
+    if (peer.flags & BLE_PEER_FLAG_CONNECTED) {
+        states.push("connected");
+    }
+    if (peer.flags & BLE_PEER_FLAG_BONDED) {
+        states.push("paired");
+    }
+    if (peer.flags & BLE_PEER_FLAG_ENCRYPTED) {
+        states.push("encrypted");
+    }
+    return states.length ? states.join(", ") : "seen";
+}
+
+function ble_peer_auto_label(peer) {
+    if ((peer.flags & BLE_PEER_FLAG_NAME_KNOWN) && peer.name) {
+        return peer.name;
+    }
+    if (peer.kind == BLE_PEER_KIND_NUS) {
+        return "NUS client";
+    }
+    if (peer.kind == BLE_PEER_KIND_HID) {
+        return "BLE HID device";
+    }
+    return "BLE device";
+}
+
+function ble_peer_id_text(peer) {
+    if (!(peer.flags & BLE_PEER_FLAG_PNP_ID_KNOWN)) {
+        return "";
+    }
+    const vid = peer.vid.toString(16).padStart(4, "0");
+    const pid = peer.pid.toString(16).padStart(4, "0");
+    const source = peer.vid_source == 2 ? "USB" : "BT";
+    return `${source} ${vid}:${pid}`;
+}
+
+function set_ble_section_status(id, className, text) {
+    const status = document.getElementById(id);
+    status.className = className;
+    status.textContent = text;
+}
+
+function clear_ble_peer_table(table_id, body_id) {
+    document.getElementById(table_id).classList.add("d-none");
+    document.getElementById(body_id).replaceChildren();
+}
+
+function set_ble_devices_closed() {
+    document.getElementById("ble_devices_refresh").disabled = true;
+    clear_ble_peer_table("ble_hid_devices_table", "ble_hid_devices_table_body");
+    clear_ble_peer_table("nus_connection_table", "nus_connection_table_body");
+    set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                           "Open device to list paired and connected BLE HID devices.");
+    set_ble_section_status("nus_connection_status", "alert alert-secondary py-2",
+                           "Open device to read NUS connection state from firmware.");
+}
+
+function create_ble_peer_label_input(peer) {
+    const labels = load_ble_labels();
+    const label_input = document.createElement("input");
+    label_input.type = "text";
+    label_input.className = "form-control form-control-sm";
+    label_input.placeholder = ble_peer_auto_label(peer);
+    label_input.value = labels[ble_label_key(peer)] || "";
+    label_input.addEventListener("change", () => {
+        const labels_ = load_ble_labels();
+        const value = label_input.value.trim();
+        if (value) {
+            labels_[ble_label_key(peer)] = value;
+        } else {
+            delete labels_[ble_label_key(peer)];
+        }
+        save_ble_labels(labels_);
+    });
+    return label_input;
+}
+
+function render_ble_hid_devices(peers) {
+    const table = document.getElementById("ble_hid_devices_table");
+    const body = document.getElementById("ble_hid_devices_table_body");
+    body.replaceChildren();
+
+    if (peers.length == 0) {
+        table.classList.add("d-none");
+        set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                               "No paired or connected BLE HID devices reported.");
+        return;
+    }
+
+    for (const peer of peers) {
+        const row = document.createElement("tr");
+        const label_cell = document.createElement("td");
+        const state_cell = document.createElement("td");
+        const port_cell = document.createElement("td");
+        const address_cell = document.createElement("td");
+        const id_cell = document.createElement("td");
+
+        label_cell.appendChild(create_ble_peer_label_input(peer));
+        state_cell.textContent = ble_peer_state_text(peer);
+        port_cell.textContent = peer.port == 0xFF || peer.port == 0 ? "" : peer.port;
+        address_cell.textContent = peer.address;
+        address_cell.classList.add("font-monospace", "small");
+        id_cell.textContent = ble_peer_id_text(peer);
+        id_cell.classList.add("font-monospace", "small");
+
+        row.append(label_cell, state_cell, port_cell, address_cell, id_cell);
+        body.appendChild(row);
+    }
+
+    table.classList.remove("d-none");
+    set_ble_section_status("ble_hid_devices_status", "alert alert-info py-2",
+                           `Showing ${peers.length} BLE HID device${peers.length == 1 ? "" : "s"}.`);
+}
+
+function render_nus_connections(peers) {
+    const table = document.getElementById("nus_connection_table");
+    const body = document.getElementById("nus_connection_table_body");
+    body.replaceChildren();
+
+    if (peers.length == 0) {
+        table.classList.add("d-none");
+        const text = nus_tester_connected ?
+            "This browser's NUS tester is connected, but firmware did not report a NUS peer yet." :
+            "No NUS client reported by firmware.";
+        set_ble_section_status("nus_connection_status", "alert alert-secondary py-2", text);
+        return;
+    }
+
+    for (const peer of peers) {
+        const row = document.createElement("tr");
+        const label_cell = document.createElement("td");
+        const state_cell = document.createElement("td");
+        const address_cell = document.createElement("td");
+
+        label_cell.appendChild(create_ble_peer_label_input(peer));
+        state_cell.textContent = ble_peer_state_text(peer);
+        address_cell.textContent = peer.address;
+        address_cell.classList.add("font-monospace", "small");
+
+        row.append(label_cell, state_cell, address_cell);
+        body.appendChild(row);
+    }
+
+    table.classList.remove("d-none");
+    const browser_text = nus_tester_connected ? " This browser's NUS tester is connected." : "";
+    set_ble_section_status("nus_connection_status", "alert alert-info py-2",
+                           `Showing ${peers.length} NUS connection${peers.length == 1 ? "" : "s"}.${browser_text}`);
+}
+
+function render_ble_devices(peers) {
+    render_ble_hid_devices(peers.filter((peer) => peer.kind != BLE_PEER_KIND_NUS));
+    render_nus_connections(peers.filter((peer) => peer.kind == BLE_PEER_KIND_NUS));
+}
+
+async function refresh_ble_devices() {
+    const refresh_button = document.getElementById("ble_devices_refresh");
+    if (device == null) {
+        set_ble_devices_closed();
+        return;
+    }
+
+    refresh_button.disabled = true;
+    set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                           "Refreshing BLE HID devices...");
+    set_ble_section_status("nus_connection_status", "alert alert-secondary py-2",
+                           "Refreshing NUS connection state...");
+
+    try {
+        const peers = [];
+        let total_count = 0;
+        for (let i = 0; i < 64; i++) {
+            const peer = await get_ble_peer_with_name(i);
+            if (ble_peer_is_unsupported(peer)) {
+                clear_ble_peer_table("ble_hid_devices_table", "ble_hid_devices_table_body");
+                clear_ble_peer_table("nus_connection_table", "nus_connection_table_body");
+                set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                                       "BLE HID device list is not supported by this firmware.");
+                set_ble_section_status("nus_connection_status", "alert alert-secondary py-2",
+                                       "NUS connection reporting is not supported by this firmware.");
+                return;
+            }
+            total_count = peer.total_count;
+            if (!peer.present) {
+                break;
+            }
+            peers.push(peer);
+            if (peers.length >= total_count) {
+                break;
+            }
+        }
+        render_ble_devices(peers);
+    } catch (e) {
+        clear_ble_peer_table("ble_hid_devices_table", "ble_hid_devices_table_body");
+        clear_ble_peer_table("nus_connection_table", "nus_connection_table_body");
+        set_ble_section_status("ble_hid_devices_status", "alert alert-warning py-2",
+                               "Unable to read BLE HID device list.");
+        set_ble_section_status("nus_connection_status", "alert alert-warning py-2",
+                               "Unable to read NUS connection state.");
+    } finally {
+        refresh_button.disabled = device == null;
+    }
 }
 
 function clear_error() {
@@ -1854,6 +2176,7 @@ function hid_on_disconnect(event) {
         device = null;
         device_buttons_set_disabled_state(true);
         update_bluetooth_buttons_state();
+        set_ble_devices_closed();
     }
 }
 
@@ -1910,6 +2233,7 @@ function device_buttons_set_disabled_state(state) {
     document.getElementById("save_to_device").disabled = state;
     document.getElementById("flash_firmware").disabled = state;
     document.getElementById("flash_b_side").disabled = state;
+    document.getElementById("ble_devices_refresh").disabled = state;
     document.getElementById("recenter_imu_button").disabled = state;
     document.getElementById("pause_imu_button").disabled = state;
     document.getElementById("resume_imu_button").disabled = state;
@@ -1931,7 +2255,7 @@ function bluetooth_buttons_set_state(state) {
         status.textContent = message;
     } else if (state === "nus_only") {
         status.className = "alert alert-info mt-2";
-        status.textContent = "This Pico W / Pico 2 W firmware supports Web Bluetooth NUS input only. Physical BLE gamepad pairing requires an nRF52840 board (Feather or Xiao). Tick Show floating NUS tester in this tab to use NUS input.";
+        status.textContent = "This Pico W / Pico 2 W firmware supports Web Bluetooth NUS input only. Physical BLE gamepad pairing requires an nRF52840 board (Feather or Xiao). Enable Floating tester in the NUS virtual input section to use NUS input.";
     } else if (state === "non_bluetooth") {
         status.className = "alert alert-warning mt-2";
         status.textContent = "This device does not appear to support BLE gamepad pairing. Flash remapper_bluetooth_pico_w.uf2 or remapper_bluetooth_pico2_w.uf2 from the latest release.";

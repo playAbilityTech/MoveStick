@@ -26,6 +26,7 @@ static struct bt_uuid_128 nus_tx_uuid = BT_UUID_INIT_128(
 
 static nus_decoder_t nus_decoder;
 static struct bt_conn* nus_conn;
+static bool nus_encrypted = false;
 static ble_nus_report_submit_t submit_report;
 
 #ifndef CONFIG_REMAPPER_NUS_LATENCY_INSTRUMENTATION
@@ -178,6 +179,7 @@ bool ble_nus_handle_disconnected(struct bt_conn* conn, uint8_t reason) {
         LOG_INF("NUS client disconnected: %s (reason=%u)", addr, reason);
         bt_conn_unref(nus_conn);
         nus_conn = NULL;
+        nus_encrypted = false;
         nus_decoder_reset(&nus_decoder);
 #if NUS_LATENCY_INSTRUMENTATION
         nus_latency_pending = false;
@@ -222,8 +224,10 @@ bool ble_nus_handle_security_changed(struct bt_conn* conn, bt_security_t level,
                                      enum bt_security_err err) {
     if (conn == nus_conn) {
         if (!err && level >= BT_SECURITY_L2) {
+            nus_encrypted = true;
             nus_optimize_connection(conn);
         } else if (err) {
+            nus_encrypted = false;
             LOG_ERR("NUS security failed: level=%u, err=%d", level, err);
         }
         return true;
@@ -235,6 +239,15 @@ bool ble_nus_handle_security_changed(struct bt_conn* conn, bt_security_t level,
     }
 
     return false;
+}
+
+bool ble_nus_get_peer(bt_addr_le_t* addr, bool* encrypted) {
+    if (!nus_conn) {
+        return false;
+    }
+    bt_addr_le_copy(addr, bt_conn_get_dst(nus_conn));
+    *encrypted = nus_encrypted;
+    return true;
 }
 
 void ble_nus_usb_report_sent(uint8_t interface, bool sent) {
