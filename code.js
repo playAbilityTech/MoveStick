@@ -8,7 +8,7 @@ const STICKY_FLAG = 1 << 0;
 const TAP_FLAG = 1 << 1;
 const HOLD_FLAG = 1 << 2;
 const CONFIG_SIZE = 36;
-const CONFIG_VERSION = 19;
+const CONFIG_VERSION = 20;
 const VENDOR_ID = 0xCAFE;
 const PRODUCT_ID = 0xBAF2;
 const DEFAULT_PARTIAL_SCROLL_TIMEOUT = 1000000;
@@ -16,8 +16,12 @@ const DEFAULT_TAP_HOLD_THRESHOLD = 200000;
 const DEFAULT_GPIO_DEBOUNCE_TIME = 5;
 const DEFAULT_SCALING = 1000;
 const DEFAULT_MACRO_ENTRY_DURATION = 1;
-const DEFAULT_IMU_ANGLE_CLAMP_LIMIT = 45;
 const DEFAULT_IMU_FILTER_BUFFER_SIZE = 10;
+const DEFAULT_IMU_DEADZONE = 0;
+const DEFAULT_IMU_MAX_ANGLE = 45;
+const DEFAULT_IMU_TWIST_DEADZONE = 2;
+const DEFAULT_IMU_TWIST_MAX_RATE = 90;
+const DEFAULT_IMU_YAW_LEAK_TIME = 3;
 
 const NLAYERS = 8;
 const NMACROS = 32;
@@ -26,7 +30,6 @@ const MACRO_ITEMS_IN_PACKET = 6;
 const IGNORE_AUTH_DEV_INPUTS_FLAG = 1 << 4;
 const GPIO_OUTPUT_MODE_FLAG = 1 << 5;
 const NORMALIZE_GAMEPAD_INPUTS_FLAG = 1 << 6;
-const IMU_ENABLE_FLAG = 1 << 7;
 const HUB_PORT_NONE = 255;
 
 const QUIRK_FLAG_RELATIVE_MASK = 0b10000000;
@@ -37,6 +40,7 @@ const LAYERS_USAGE_PAGE = 0xFFF10000;
 const EXPR_USAGE_PAGE = 0xFFF30000;
 const MIDI_USAGE_PAGE = 0xFFF70000;
 const BUTTON_USAGE_PAGE = 0x00090000;
+const STANDARD_YAW_USAGE = '0x0020008d';
 
 const RESET_INTO_BOOTSEL = 1;
 const SET_CONFIG = 2;
@@ -63,6 +67,29 @@ const SET_MONITOR_ENABLED = 22;
 const CLEAR_QUIRKS = 23;
 const ADD_QUIRK = 24;
 const GET_QUIRK = 25;
+const SET_SENSOR_CONFIG = 26;
+const GET_SENSOR_CONFIG = 27;
+const RECENTER_IMU = 28;
+const PAUSE_IMU = 29;
+const RESUME_IMU = 30;
+const GET_BLE_PEER = 31;
+
+const SENSOR_CONFIG_FLAG_ENABLE = 1 << 0;
+const SENSOR_CONFIG_FLAG_INVERT_ROLL = 1 << 1;
+const SENSOR_CONFIG_FLAG_INVERT_PITCH = 1 << 2;
+const SENSOR_CONFIG_FLAG_INVERT_YAW = 1 << 3;
+
+const BLE_PEER_KIND_UNKNOWN = 0;
+const BLE_PEER_KIND_HID = 1;
+const BLE_PEER_KIND_NUS = 2;
+const BLE_PEER_FLAG_BONDED = 1 << 0;
+const BLE_PEER_FLAG_CONNECTED = 1 << 1;
+const BLE_PEER_FLAG_NAME_KNOWN = 1 << 2;
+const BLE_PEER_FLAG_PNP_ID_KNOWN = 1 << 3;
+const BLE_PEER_FLAG_ENCRYPTED = 1 << 4;
+const BLE_PEER_NAME_CHUNK_SIZE = 11;
+const BLE_LABELS_STORAGE_KEY = "hid-remapper-ble-peer-labels-v1";
+const DESCRIPTOR_CHANGED_EVENT = "hid-remapper-descriptor-changed";
 
 const PERSIST_CONFIG_SUCCESS = 1;
 const PERSIST_CONFIG_CONFIG_TOO_BIG = 2;
@@ -151,9 +178,23 @@ let config = {
     'gpio_output_mode': 0,
     'input_labels': 0,
     'normalize_gamepad_inputs': true,
-    'imu_enabled': false,
-    'imu_angle_clamp_limit': DEFAULT_IMU_ANGLE_CLAMP_LIMIT,
+    'imu_enabled': true,
     'imu_filter_buffer_size': DEFAULT_IMU_FILTER_BUFFER_SIZE,
+    'imu_pitch_deadzone': DEFAULT_IMU_DEADZONE,
+    'imu_roll_deadzone': DEFAULT_IMU_DEADZONE,
+    'imu_yaw_deadzone': DEFAULT_IMU_DEADZONE,
+    'imu_pitch_pos_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_pitch_neg_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_roll_pos_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_roll_neg_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_yaw_pos_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_yaw_neg_max_angle': DEFAULT_IMU_MAX_ANGLE,
+    'imu_twist_deadzone': DEFAULT_IMU_TWIST_DEADZONE,
+    'imu_twist_max_rate': DEFAULT_IMU_TWIST_MAX_RATE,
+    'imu_yaw_leak_time': DEFAULT_IMU_YAW_LEAK_TIME,
+    'imu_roll_inverted': false,
+    'imu_pitch_inverted': false,
+    'imu_yaw_inverted': false,
     mappings: [{
         'source_usage': '0x00000000',
         'target_usage': '0x00000000',
@@ -184,6 +225,7 @@ const ignored_usages = new Set([
 ]);
 let modal_return_mapping = null;
 let modal_return_element = null;
+let nus_tester_connected = false;
 
 document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("open_device").addEventListener("click", open_device);
@@ -196,18 +238,26 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("flash_b_side").addEventListener("click", flash_b_side);
     document.getElementById("pair_new_device").addEventListener("click", pair_new_device);
     document.getElementById("clear_bonds").addEventListener("click", clear_bonds);
+    document.getElementById("ble_devices_refresh").addEventListener("click", refresh_ble_devices);
     document.getElementById("monitor_clear").addEventListener("click", monitor_clear);
     document.getElementById("file_input").addEventListener("change", file_uploaded);
     document.getElementById("add_quirk").addEventListener("click", add_empty_quirk);
 
     device_buttons_set_disabled_state(true);
+    update_bluetooth_buttons_state();
+
+    document.addEventListener("nus-connection-changed", (event) => {
+        nus_tester_connected = event.detail?.connected ?? false;
+        update_bluetooth_buttons_state();
+        if (device != null) {
+            refresh_ble_devices();
+        }
+    });
 
     document.getElementById("partial_scroll_timeout_input").addEventListener("change", partial_scroll_timeout_onchange);
     document.getElementById("tap_hold_threshold_input").addEventListener("change", tap_hold_threshold_onchange);
     document.getElementById("gpio_debounce_time_input").addEventListener("change", gpio_debounce_time_onchange);
     document.getElementById("macro_entry_duration_input").addEventListener("change", macro_entry_duration_onchange);
-    document.getElementById("imu_angle_clamp_limit_input").addEventListener("change", imu_angle_clamp_limit_onchange);
-    document.getElementById("imu_filter_buffer_size_input").addEventListener("change", imu_filter_buffer_size_onchange);
     for (let i = 0; i < NLAYERS; i++) {
         document.getElementById("unmapped_passthrough_checkbox" + i).addEventListener("change", unmapped_passthrough_onchange);
     }
@@ -219,10 +269,25 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("ignore_auth_dev_inputs_checkbox").addEventListener("change", ignore_auth_dev_inputs_onchange);
     document.getElementById("normalize_gamepad_inputs_checkbox").addEventListener("change", normalize_gamepad_inputs_onchange);
     document.getElementById("imu_enabled_checkbox").addEventListener("change", imu_enabled_onchange);
-    document.getElementById("imu_angle_clamp_limit_input").addEventListener("change", imu_angle_clamp_limit_onchange);
+    document.getElementById("recenter_imu_button").addEventListener("click", recenter_imu);
+    document.getElementById("pause_imu_button").addEventListener("click", pause_imu);
+    document.getElementById("resume_imu_button").addEventListener("click", resume_imu);
+    document.getElementById("imu_pitch_deadzone_input").addEventListener("change", imu_pitch_deadzone_onchange);
+    document.getElementById("imu_roll_deadzone_input").addEventListener("change", imu_roll_deadzone_onchange);
+    document.getElementById("imu_yaw_deadzone_input").addEventListener("change", imu_yaw_deadzone_onchange);
+    document.getElementById("imu_pitch_pos_max_angle_input").addEventListener("change", imu_pitch_pos_max_angle_onchange);
+    document.getElementById("imu_pitch_neg_max_angle_input").addEventListener("change", imu_pitch_neg_max_angle_onchange);
+    document.getElementById("imu_roll_pos_max_angle_input").addEventListener("change", imu_roll_pos_max_angle_onchange);
+    document.getElementById("imu_roll_neg_max_angle_input").addEventListener("change", imu_roll_neg_max_angle_onchange);
+    document.getElementById("imu_yaw_pos_max_angle_input").addEventListener("change", imu_yaw_pos_max_angle_onchange);
+    document.getElementById("imu_yaw_neg_max_angle_input").addEventListener("change", imu_yaw_neg_max_angle_onchange);
+    document.getElementById("imu_twist_deadzone_input").addEventListener("change", imu_twist_deadzone_onchange);
+    document.getElementById("imu_twist_max_rate_input").addEventListener("change", imu_twist_max_rate_onchange);
+    document.getElementById("imu_yaw_leak_time_input").addEventListener("change", imu_yaw_leak_time_onchange);
     document.getElementById("imu_filter_buffer_size_input").addEventListener("change", imu_filter_buffer_size_onchange);
     document.getElementById("imu_roll_inverted_checkbox").addEventListener("change", imu_roll_inverted_onchange);
     document.getElementById("imu_pitch_inverted_checkbox").addEventListener("change", imu_pitch_inverted_onchange);
+    document.getElementById("imu_yaw_inverted_checkbox").addEventListener("change", imu_yaw_inverted_onchange);
 
     document.getElementById("nav-monitor-tab").addEventListener("shown.bs.tab", monitor_tab_shown);
     document.getElementById("nav-monitor-tab").addEventListener("hide.bs.tab", monitor_tab_hide);
@@ -271,7 +336,8 @@ async function open_device() {
                 await set_monitor_enabled(monitor_enabled);
                 await get_usages_from_device();
                 setup_usages_modals();
-                bluetooth_buttons_set_visibility(device.productName.includes("Bluetooth"));
+                update_bluetooth_buttons_state();
+                await refresh_ble_devices();
             }
         }
     } catch (e) {
@@ -282,6 +348,8 @@ async function open_device() {
 
     if (!success) {
         device = null;
+        update_bluetooth_buttons_state();
+        set_ble_devices_closed();
     }
 
     busy = false;
@@ -303,9 +371,13 @@ async function load_from_device() {
 
     try {
         await send_feature_command(GET_CONFIG);
-        const [config_version, flags, unmapped_passthrough_layer_mask, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, tap_hold_threshold, gpio_debounce_time_ms, our_descriptor_number, macro_entry_duration, quirk_count, imu_angle_clamp_limit, imu_filter_buffer_size, imu_roll_inverted, imu_pitch_inverted] =
-            await read_config_feature([UINT8, UINT8, UINT8, UINT32, UINT16, UINT32, UINT32, UINT8, UINT32, UINT8, UINT8, UINT8, UINT16, UINT8, UINT8, UINT8, UINT8]);
+        const [config_version, flags, unmapped_passthrough_layer_mask, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, tap_hold_threshold, gpio_debounce_time_ms, our_descriptor_number, macro_entry_duration, quirk_count] =
+            await read_config_feature([UINT8, UINT8, UINT8, UINT32, UINT16, UINT32, UINT32, UINT8, UINT32, UINT8, UINT8, UINT8, UINT16]);
         check_received_version(config_version);
+
+        await send_feature_command(GET_SENSOR_CONFIG);
+        const [sensor_flags, imu_filter_buffer_size, imu_pitch_deadzone, imu_roll_deadzone, imu_yaw_deadzone, imu_pitch_pos_max_angle, imu_pitch_neg_max_angle, imu_roll_pos_max_angle, imu_roll_neg_max_angle, imu_yaw_pos_max_angle, imu_yaw_neg_max_angle, imu_twist_deadzone, imu_twist_max_rate, imu_yaw_leak_time] =
+            await read_config_feature([UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8, UINT8]);
 
         config['version'] = config_version;
         config['unmapped_passthrough_layers'] = mask_to_layer_list(unmapped_passthrough_layer_mask);
@@ -317,12 +389,24 @@ async function load_from_device() {
         config['ignore_auth_dev_inputs'] = !!(flags & IGNORE_AUTH_DEV_INPUTS_FLAG);
         config['gpio_output_mode'] = (flags & GPIO_OUTPUT_MODE_FLAG) ? 1 : 0;
         config['normalize_gamepad_inputs'] = !!(flags & NORMALIZE_GAMEPAD_INPUTS_FLAG);
-        config['imu_enabled'] = !!(flags & IMU_ENABLE_FLAG);
         config['macro_entry_duration'] = macro_entry_duration + 1;
-        config['imu_angle_clamp_limit'] = imu_angle_clamp_limit;
+        config['imu_enabled'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_ENABLE);
         config['imu_filter_buffer_size'] = imu_filter_buffer_size;
-        config['imu_roll_inverted'] = !!imu_roll_inverted;
-        config['imu_pitch_inverted'] = !!imu_pitch_inverted;
+        config['imu_pitch_deadzone'] = imu_pitch_deadzone;
+        config['imu_roll_deadzone'] = imu_roll_deadzone;
+        config['imu_yaw_deadzone'] = imu_yaw_deadzone;
+        config['imu_pitch_pos_max_angle'] = imu_pitch_pos_max_angle;
+        config['imu_pitch_neg_max_angle'] = imu_pitch_neg_max_angle;
+        config['imu_roll_pos_max_angle'] = imu_roll_pos_max_angle;
+        config['imu_roll_neg_max_angle'] = imu_roll_neg_max_angle;
+        config['imu_yaw_pos_max_angle'] = imu_yaw_pos_max_angle;
+        config['imu_yaw_neg_max_angle'] = imu_yaw_neg_max_angle;
+        config['imu_twist_deadzone'] = imu_twist_deadzone;
+        config['imu_twist_max_rate'] = imu_twist_max_rate;
+        config['imu_yaw_leak_time'] = imu_yaw_leak_time;
+        config['imu_roll_inverted'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_INVERT_ROLL);
+        config['imu_pitch_inverted'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_INVERT_PITCH);
+        config['imu_yaw_inverted'] = !!(sensor_flags & SENSOR_CONFIG_FLAG_INVERT_YAW);
         config['mappings'] = [];
 
         for (let i = 0; i < mapping_count; i++) {
@@ -458,10 +542,10 @@ async function save_to_device() {
 
     try {
         await send_feature_command(SUSPEND);
+        normalize_imu_config();
         const flags = (config['ignore_auth_dev_inputs'] ? IGNORE_AUTH_DEV_INPUTS_FLAG : 0) |
             (config['gpio_output_mode'] ? GPIO_OUTPUT_MODE_FLAG : 0) |
-            (config['normalize_gamepad_inputs'] ? NORMALIZE_GAMEPAD_INPUTS_FLAG : 0) |
-            (config['imu_enabled'] ? IMU_ENABLE_FLAG : 0);
+            (config['normalize_gamepad_inputs'] ? NORMALIZE_GAMEPAD_INPUTS_FLAG : 0);
         await send_feature_command(SET_CONFIG, [
             [UINT8, flags],
             [UINT8, layer_list_to_mask(config['unmapped_passthrough_layers'])],
@@ -471,10 +555,27 @@ async function save_to_device() {
             [UINT8, config['gpio_debounce_time_ms']],
             [UINT8, config['our_descriptor_number']],
             [UINT8, config['macro_entry_duration'] - 1],
-            [UINT8, config['imu_angle_clamp_limit']],
+        ]);
+        const sensor_flags = (config['imu_enabled'] ? SENSOR_CONFIG_FLAG_ENABLE : 0) |
+            (config['imu_roll_inverted'] ? SENSOR_CONFIG_FLAG_INVERT_ROLL : 0) |
+            (config['imu_pitch_inverted'] ? SENSOR_CONFIG_FLAG_INVERT_PITCH : 0) |
+            (config['imu_yaw_inverted'] ? SENSOR_CONFIG_FLAG_INVERT_YAW : 0);
+        await send_feature_command(SET_SENSOR_CONFIG, [
+            [UINT8, sensor_flags],
             [UINT8, config['imu_filter_buffer_size']],
-            [UINT8, config['imu_roll_inverted'] ? 1 : 0],
-            [UINT8, config['imu_pitch_inverted'] ? 1 : 0],
+            [UINT8, config['imu_pitch_deadzone']],
+            [UINT8, config['imu_roll_deadzone']],
+            [UINT8, config['imu_yaw_deadzone']],
+            [UINT8, config['imu_pitch_pos_max_angle']],
+            [UINT8, config['imu_pitch_neg_max_angle']],
+            [UINT8, config['imu_roll_pos_max_angle']],
+            [UINT8, config['imu_roll_neg_max_angle']],
+            [UINT8, config['imu_yaw_pos_max_angle']],
+            [UINT8, config['imu_yaw_neg_max_angle']],
+            [UINT8, config['imu_twist_deadzone']],
+            [UINT8, config['imu_twist_max_rate']],
+            [UINT8, config['imu_yaw_leak_time']],
+            [UINT8, 0],
         ]);
         await send_feature_command(CLEAR_MAPPING);
 
@@ -649,6 +750,9 @@ function set_config_ui_state() {
     }
     document.getElementById('interval_override_dropdown').value = config['interval_override'];
     document.getElementById('our_descriptor_number_dropdown').value = config['our_descriptor_number'];
+    document.dispatchEvent(new CustomEvent(DESCRIPTOR_CHANGED_EVENT, {
+        detail: { descriptorNumber: config['our_descriptor_number'] },
+    }));
     document.getElementById('ignore_auth_dev_inputs_checkbox').checked = config['ignore_auth_dev_inputs'];
     document.getElementById('macro_entry_duration_input').value = config['macro_entry_duration'];
     document.getElementById('gpio_output_mode_dropdown').value = config['gpio_output_mode'];
@@ -656,10 +760,22 @@ function set_config_ui_state() {
     document.getElementById('input_labels_modal_dropdown').value = config['input_labels'];
     document.getElementById('normalize_gamepad_inputs_checkbox').checked = config['normalize_gamepad_inputs'];
     document.getElementById('imu_enabled_checkbox').checked = config['imu_enabled'];
-    document.getElementById('imu_angle_clamp_limit_input').value = config['imu_angle_clamp_limit'] ?? DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
     document.getElementById('imu_filter_buffer_size_input').value = config['imu_filter_buffer_size'] ?? DEFAULT_IMU_FILTER_BUFFER_SIZE;
+    document.getElementById('imu_pitch_deadzone_input').value = config['imu_pitch_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    document.getElementById('imu_roll_deadzone_input').value = config['imu_roll_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    document.getElementById('imu_yaw_deadzone_input').value = config['imu_yaw_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    document.getElementById('imu_pitch_pos_max_angle_input').value = config['imu_pitch_pos_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_pitch_neg_max_angle_input').value = config['imu_pitch_neg_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_roll_pos_max_angle_input').value = config['imu_roll_pos_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_roll_neg_max_angle_input').value = config['imu_roll_neg_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_yaw_pos_max_angle_input').value = config['imu_yaw_pos_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_yaw_neg_max_angle_input').value = config['imu_yaw_neg_max_angle'] ?? DEFAULT_IMU_MAX_ANGLE;
+    document.getElementById('imu_twist_deadzone_input').value = config['imu_twist_deadzone'] ?? DEFAULT_IMU_TWIST_DEADZONE;
+    document.getElementById('imu_twist_max_rate_input').value = config['imu_twist_max_rate'] ?? DEFAULT_IMU_TWIST_MAX_RATE;
+    document.getElementById('imu_yaw_leak_time_input').value = config['imu_yaw_leak_time'] ?? DEFAULT_IMU_YAW_LEAK_TIME;
     document.getElementById('imu_roll_inverted_checkbox').checked = config['imu_roll_inverted'] ?? false;
     document.getElementById('imu_pitch_inverted_checkbox').checked = config['imu_pitch_inverted'] ?? false;
+    document.getElementById('imu_yaw_inverted_checkbox').checked = config['imu_yaw_inverted'] ?? false;
 }
 
 function set_mappings_ui_state() {
@@ -741,6 +857,20 @@ function set_expressions_ui_state() {
     }
 }
 
+function normalize_numeric_config_value(key, default_value, min_value, max_value) {
+    let value = parseInt(config[key], 10);
+    if (isNaN(value)) {
+        value = default_value;
+    }
+    if (value < min_value) {
+        value = min_value;
+    }
+    if (value > max_value) {
+        value = max_value;
+    }
+    config[key] = value;
+}
+
 function default_layer_list() {
     return Array.from({ length: NLAYERS }, (_, i) => i);
 }
@@ -772,11 +902,6 @@ function normalize_config_shape() {
     config['gpio_output_mode'] = config['gpio_output_mode'] ?? 0;
     config['input_labels'] = config['input_labels'] ?? 0;
     config['normalize_gamepad_inputs'] = config['normalize_gamepad_inputs'] ?? true;
-    config['imu_enabled'] = config['imu_enabled'] ?? false;
-    config['imu_angle_clamp_limit'] = config['imu_angle_clamp_limit'] ?? DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
-    config['imu_filter_buffer_size'] = config['imu_filter_buffer_size'] ?? DEFAULT_IMU_FILTER_BUFFER_SIZE;
-    config['imu_roll_inverted'] = config['imu_roll_inverted'] ?? false;
-    config['imu_pitch_inverted'] = config['imu_pitch_inverted'] ?? false;
 
     for (let i = 0; i < config['mappings'].length; i++) {
         if ((config['mappings'][i] == null) || (typeof config['mappings'][i] != 'object')) {
@@ -808,6 +933,46 @@ function normalize_config_shape() {
     while (config['expressions'].length < NEXPRESSIONS) {
         config['expressions'].push('');
     }
+}
+
+function normalize_imu_config() {
+    const legacy_max_angle = config['imu_angle_clamp_limit'];
+    const max_angle_default = legacy_max_angle ?? DEFAULT_IMU_MAX_ANGLE;
+
+    config['imu_enabled'] = config['imu_enabled'] ?? false;
+    config['imu_filter_buffer_size'] = config['imu_filter_buffer_size'] ?? DEFAULT_IMU_FILTER_BUFFER_SIZE;
+    const legacy_deadzone = config['imu_tilt_deadzone'];
+    config['imu_pitch_deadzone'] = config['imu_pitch_deadzone'] ?? legacy_deadzone ?? DEFAULT_IMU_DEADZONE;
+    config['imu_roll_deadzone'] = config['imu_roll_deadzone'] ?? legacy_deadzone ?? DEFAULT_IMU_DEADZONE;
+    config['imu_yaw_deadzone'] = config['imu_yaw_deadzone'] ?? DEFAULT_IMU_DEADZONE;
+    config['imu_pitch_pos_max_angle'] = config['imu_pitch_pos_max_angle'] ?? max_angle_default;
+    config['imu_pitch_neg_max_angle'] = config['imu_pitch_neg_max_angle'] ?? max_angle_default;
+    config['imu_roll_pos_max_angle'] = config['imu_roll_pos_max_angle'] ?? max_angle_default;
+    config['imu_roll_neg_max_angle'] = config['imu_roll_neg_max_angle'] ?? max_angle_default;
+    config['imu_yaw_pos_max_angle'] = config['imu_yaw_pos_max_angle'] ?? max_angle_default;
+    config['imu_yaw_neg_max_angle'] = config['imu_yaw_neg_max_angle'] ?? max_angle_default;
+    config['imu_twist_deadzone'] = config['imu_twist_deadzone'] ?? DEFAULT_IMU_TWIST_DEADZONE;
+    config['imu_twist_max_rate'] = config['imu_twist_max_rate'] ?? DEFAULT_IMU_TWIST_MAX_RATE;
+    config['imu_yaw_leak_time'] = config['imu_yaw_leak_time'] ?? DEFAULT_IMU_YAW_LEAK_TIME;
+    config['imu_roll_inverted'] = config['imu_roll_inverted'] ?? false;
+    config['imu_pitch_inverted'] = config['imu_pitch_inverted'] ?? false;
+    config['imu_yaw_inverted'] = config['imu_yaw_inverted'] ?? false;
+
+    normalize_numeric_config_value('imu_filter_buffer_size', DEFAULT_IMU_FILTER_BUFFER_SIZE, 1, 16);
+    normalize_numeric_config_value('imu_pitch_deadzone', DEFAULT_IMU_DEADZONE, 0, 90);
+    normalize_numeric_config_value('imu_roll_deadzone', DEFAULT_IMU_DEADZONE, 0, 90);
+    normalize_numeric_config_value('imu_yaw_deadzone', DEFAULT_IMU_DEADZONE, 0, 90);
+    normalize_numeric_config_value('imu_pitch_pos_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_pitch_neg_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_roll_pos_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_roll_neg_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_yaw_pos_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_yaw_neg_max_angle', DEFAULT_IMU_MAX_ANGLE, 1, 90);
+    normalize_numeric_config_value('imu_twist_deadzone', DEFAULT_IMU_TWIST_DEADZONE, 0, 255);
+    normalize_numeric_config_value('imu_twist_max_rate', DEFAULT_IMU_TWIST_MAX_RATE, 1, 255);
+    normalize_numeric_config_value('imu_yaw_leak_time', DEFAULT_IMU_YAW_LEAK_TIME, 0, 60);
+    delete config['imu_angle_clamp_limit'];
+    delete config['imu_tilt_deadzone'];
 }
 
 function set_ui_state() {
@@ -865,9 +1030,15 @@ function set_ui_state() {
     }
     if (config['version'] < 19) {
         // IMU settings were added in version 19
-        config['imu_angle_clamp_limit'] = DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
+        config['imu_enabled'] = false;
         config['imu_filter_buffer_size'] = DEFAULT_IMU_FILTER_BUFFER_SIZE;
+        config['imu_roll_inverted'] = false;
+        config['imu_pitch_inverted'] = false;
     }
+    if (config['version'] < 20) {
+        config['imu_yaw_inverted'] = false;
+    }
+    normalize_imu_config();
     if (config['version'] < CONFIG_VERSION) {
         config['version'] = CONFIG_VERSION;
     }
@@ -964,10 +1135,32 @@ async function flash_b_side() {
 
 async function pair_new_device() {
     await send_feature_command(PAIR_NEW_DEVICE);
+    set_ble_pairing_status("Command sent. The onboard LED should turn solid while scanning for new devices. Put your controller in pairing mode now.");
+    await refresh_ble_devices();
 }
 
 async function clear_bonds() {
     await send_feature_command(CLEAR_BONDS);
+    set_ble_pairing_status("All paired devices forgotten. The onboard LED should turn solid while scanning for new devices.");
+    window.setTimeout(refresh_ble_devices, 750);
+}
+
+async function recenter_imu() {
+    await send_feature_command(RECENTER_IMU);
+}
+
+async function pause_imu() {
+    await send_feature_command(PAUSE_IMU);
+}
+
+async function resume_imu() {
+    await send_feature_command(RESUME_IMU);
+}
+
+function set_ble_pairing_status(message) {
+    const status = document.getElementById("ble_input_status");
+    status.className = "alert alert-info mt-2";
+    status.textContent = message;
 }
 
 function file_uploaded() {
@@ -1068,6 +1261,304 @@ async function read_config_feature(fields = []) {
     return ret;
 }
 
+async function read_config_feature_raw() {
+    let attempts_left = 10;
+    let delay = 2;
+    while (true) {
+        const data_with_report_id = await device.receiveFeatureReport(REPORT_ID_CONFIG);
+        const data = new DataView(data_with_report_id.buffer, 1);
+        if (data.byteLength > 0) {
+            check_crc(data);
+            return data;
+        }
+        if ((--attempts_left) <= 0) {
+            throw new Error('Error in read_config_feature_raw (given up retrying).');
+        }
+        await (new Promise(resolve => setTimeout(resolve, delay)));
+        delay *= 2;
+    }
+}
+
+function parse_ble_peer_info(data) {
+    let pos = 0;
+    const peer = {};
+    peer.present = data.getUint8(pos++);
+    peer.total_count = data.getUint8(pos++);
+    peer.kind = data.getUint8(pos++);
+    peer.flags = data.getUint8(pos++);
+    peer.addr_type = data.getUint8(pos++);
+    const addr_bytes = [];
+    for (let i = 0; i < 6; i++) {
+        addr_bytes.push(data.getUint8(pos++));
+    }
+    peer.address = addr_bytes.map((x) => x.toString(16).padStart(2, "0")).join(":");
+    peer.port = data.getUint8(pos++);
+    peer.vid_source = data.getUint8(pos++);
+    peer.vid = data.getUint16(pos, true);
+    pos += 2;
+    peer.pid = data.getUint16(pos, true);
+    pos += 2;
+    peer.product_version = data.getUint16(pos, true);
+    pos += 2;
+    peer.name_total_len = data.getUint8(pos++);
+    peer.name_chunk_len = data.getUint8(pos++);
+    peer.name_chunk = "";
+    for (let i = 0; i < Math.min(peer.name_chunk_len, BLE_PEER_NAME_CHUNK_SIZE); i++) {
+        peer.name_chunk += String.fromCharCode(data.getUint8(pos++));
+    }
+    return peer;
+}
+
+async function read_ble_peer(index, name_offset = 0) {
+    await send_feature_command(GET_BLE_PEER, [[UINT32, index], [UINT32, name_offset]]);
+    return parse_ble_peer_info(await read_config_feature_raw());
+}
+
+function ble_peer_is_unsupported(peer) {
+    return peer.present == 0xFF &&
+        peer.total_count == 0xFF &&
+        peer.kind == 0xFF &&
+        peer.flags == 0xFF;
+}
+
+async function get_ble_peer_with_name(index) {
+    const peer = await read_ble_peer(index, 0);
+    if (!peer.present || ble_peer_is_unsupported(peer)) {
+        return peer;
+    }
+
+    let name = peer.name_chunk;
+    while (name.length < peer.name_total_len) {
+        const chunk_peer = await read_ble_peer(index, name.length);
+        if (!chunk_peer.present || chunk_peer.name_chunk_len == 0) {
+            break;
+        }
+        name += chunk_peer.name_chunk;
+    }
+    peer.name = name.slice(0, peer.name_total_len);
+    return peer;
+}
+
+function load_ble_labels() {
+    try {
+        return JSON.parse(localStorage.getItem(BLE_LABELS_STORAGE_KEY) || "{}");
+    } catch (e) {
+        return {};
+    }
+}
+
+function save_ble_labels(labels) {
+    localStorage.setItem(BLE_LABELS_STORAGE_KEY, JSON.stringify(labels));
+}
+
+function ble_label_key(peer) {
+    return `${peer.addr_type}:${peer.address}`;
+}
+
+function ble_peer_state_text(peer) {
+    const states = [];
+    if (peer.flags & BLE_PEER_FLAG_CONNECTED) {
+        states.push("connected");
+    }
+    if (peer.flags & BLE_PEER_FLAG_BONDED) {
+        states.push("paired");
+    }
+    if (peer.flags & BLE_PEER_FLAG_ENCRYPTED) {
+        states.push("encrypted");
+    }
+    return states.length ? states.join(", ") : "seen";
+}
+
+function ble_peer_auto_label(peer) {
+    if ((peer.flags & BLE_PEER_FLAG_NAME_KNOWN) && peer.name) {
+        return peer.name;
+    }
+    if (peer.kind == BLE_PEER_KIND_NUS) {
+        return "NUS client";
+    }
+    if (peer.kind == BLE_PEER_KIND_HID) {
+        return "BLE HID device";
+    }
+    return "BLE device";
+}
+
+function ble_peer_id_text(peer) {
+    if (!(peer.flags & BLE_PEER_FLAG_PNP_ID_KNOWN)) {
+        return "";
+    }
+    const vid = peer.vid.toString(16).padStart(4, "0");
+    const pid = peer.pid.toString(16).padStart(4, "0");
+    const source = peer.vid_source == 2 ? "USB" : "BT";
+    return `${source} ${vid}:${pid}`;
+}
+
+function set_ble_section_status(id, className, text) {
+    const status = document.getElementById(id);
+    status.className = className;
+    status.textContent = text;
+}
+
+function clear_ble_peer_table(table_id, body_id) {
+    document.getElementById(table_id).classList.add("d-none");
+    document.getElementById(body_id).replaceChildren();
+}
+
+function set_ble_devices_closed() {
+    document.getElementById("ble_devices_refresh").disabled = true;
+    clear_ble_peer_table("ble_hid_devices_table", "ble_hid_devices_table_body");
+    clear_ble_peer_table("nus_connection_table", "nus_connection_table_body");
+    set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                           "Open device to list paired and connected BLE HID devices.");
+    set_ble_section_status("nus_connection_status", "alert alert-secondary py-2",
+                           "Open device to read NUS connection state from firmware.");
+}
+
+function create_ble_peer_label_input(peer) {
+    const labels = load_ble_labels();
+    const label_input = document.createElement("input");
+    label_input.type = "text";
+    label_input.className = "form-control form-control-sm";
+    label_input.placeholder = ble_peer_auto_label(peer);
+    label_input.value = labels[ble_label_key(peer)] || "";
+    label_input.addEventListener("change", () => {
+        const labels_ = load_ble_labels();
+        const value = label_input.value.trim();
+        if (value) {
+            labels_[ble_label_key(peer)] = value;
+        } else {
+            delete labels_[ble_label_key(peer)];
+        }
+        save_ble_labels(labels_);
+    });
+    return label_input;
+}
+
+function render_ble_hid_devices(peers) {
+    const table = document.getElementById("ble_hid_devices_table");
+    const body = document.getElementById("ble_hid_devices_table_body");
+    body.replaceChildren();
+
+    if (peers.length == 0) {
+        table.classList.add("d-none");
+        set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                               "No paired or connected BLE HID devices reported.");
+        return;
+    }
+
+    for (const peer of peers) {
+        const row = document.createElement("tr");
+        const label_cell = document.createElement("td");
+        const state_cell = document.createElement("td");
+        const port_cell = document.createElement("td");
+        const address_cell = document.createElement("td");
+        const id_cell = document.createElement("td");
+
+        label_cell.appendChild(create_ble_peer_label_input(peer));
+        state_cell.textContent = ble_peer_state_text(peer);
+        port_cell.textContent = peer.port == 0xFF || peer.port == 0 ? "" : peer.port;
+        address_cell.textContent = peer.address;
+        address_cell.classList.add("font-monospace", "small");
+        id_cell.textContent = ble_peer_id_text(peer);
+        id_cell.classList.add("font-monospace", "small");
+
+        row.append(label_cell, state_cell, port_cell, address_cell, id_cell);
+        body.appendChild(row);
+    }
+
+    table.classList.remove("d-none");
+    set_ble_section_status("ble_hid_devices_status", "alert alert-info py-2",
+                           `Showing ${peers.length} BLE HID device${peers.length == 1 ? "" : "s"}.`);
+}
+
+function render_nus_connections(peers) {
+    const table = document.getElementById("nus_connection_table");
+    const body = document.getElementById("nus_connection_table_body");
+    body.replaceChildren();
+
+    if (peers.length == 0) {
+        table.classList.add("d-none");
+        const text = nus_tester_connected ?
+            "This browser's NUS tester is connected, but firmware did not report a NUS peer yet." :
+            "No NUS client reported by firmware.";
+        set_ble_section_status("nus_connection_status", "alert alert-secondary py-2", text);
+        return;
+    }
+
+    for (const peer of peers) {
+        const row = document.createElement("tr");
+        const label_cell = document.createElement("td");
+        const state_cell = document.createElement("td");
+        const address_cell = document.createElement("td");
+
+        label_cell.appendChild(create_ble_peer_label_input(peer));
+        state_cell.textContent = ble_peer_state_text(peer);
+        address_cell.textContent = peer.address;
+        address_cell.classList.add("font-monospace", "small");
+
+        row.append(label_cell, state_cell, address_cell);
+        body.appendChild(row);
+    }
+
+    table.classList.remove("d-none");
+    const browser_text = nus_tester_connected ? " This browser's NUS tester is connected." : "";
+    set_ble_section_status("nus_connection_status", "alert alert-info py-2",
+                           `Showing ${peers.length} NUS connection${peers.length == 1 ? "" : "s"}.${browser_text}`);
+}
+
+function render_ble_devices(peers) {
+    render_ble_hid_devices(peers.filter((peer) => peer.kind != BLE_PEER_KIND_NUS));
+    render_nus_connections(peers.filter((peer) => peer.kind == BLE_PEER_KIND_NUS));
+}
+
+async function refresh_ble_devices() {
+    const refresh_button = document.getElementById("ble_devices_refresh");
+    if (device == null) {
+        set_ble_devices_closed();
+        return;
+    }
+
+    refresh_button.disabled = true;
+    set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                           "Refreshing BLE HID devices...");
+    set_ble_section_status("nus_connection_status", "alert alert-secondary py-2",
+                           "Refreshing NUS connection state...");
+
+    try {
+        const peers = [];
+        let total_count = 0;
+        for (let i = 0; i < 64; i++) {
+            const peer = await get_ble_peer_with_name(i);
+            if (ble_peer_is_unsupported(peer)) {
+                clear_ble_peer_table("ble_hid_devices_table", "ble_hid_devices_table_body");
+                clear_ble_peer_table("nus_connection_table", "nus_connection_table_body");
+                set_ble_section_status("ble_hid_devices_status", "alert alert-secondary py-2",
+                                       "BLE HID device list is not supported by this firmware.");
+                set_ble_section_status("nus_connection_status", "alert alert-secondary py-2",
+                                       "NUS connection reporting is not supported by this firmware.");
+                return;
+            }
+            total_count = peer.total_count;
+            if (!peer.present) {
+                break;
+            }
+            peers.push(peer);
+            if (peers.length >= total_count) {
+                break;
+            }
+        }
+        render_ble_devices(peers);
+    } catch (e) {
+        clear_ble_peer_table("ble_hid_devices_table", "ble_hid_devices_table_body");
+        clear_ble_peer_table("nus_connection_table", "nus_connection_table_body");
+        set_ble_section_status("ble_hid_devices_status", "alert alert-warning py-2",
+                               "Unable to read BLE HID device list.");
+        set_ble_section_status("nus_connection_status", "alert alert-warning py-2",
+                               "Unable to read NUS connection state.");
+    } finally {
+        refresh_button.disabled = device == null;
+    }
+}
+
 function clear_error() {
     document.getElementById("error").classList.add("d-none");
 }
@@ -1109,7 +1600,7 @@ async function check_device_version() {
     // device because it could be version X, ignore our GET_CONFIG call with version Y and
     // just happen to have Y at the right place in the buffer from some previous call done
     // by some other software.
-    for (const version of [CONFIG_VERSION, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2]) {
+    for (const version of [CONFIG_VERSION, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2]) {
         await send_feature_command(GET_CONFIG, [], version);
         const [received_version] = await read_config_feature([UINT8]);
         if (received_version == version) {
@@ -1338,13 +1829,22 @@ function setup_usage_modal(source_or_target) {
         clear_children(element);
     }
     let template = document.getElementById('usage_button_template');
+    const add_usage_button = (usage, usage_def, usage_class = usage_def['class'], disabled_reason = null) => {
+        let clone = template.content.cloneNode(true).firstElementChild;
+        clone.innerText = usage_def['name'];
+        clone.title = disabled_reason ?? usage;
+        clone.setAttribute('data-hid-usage', usage);
+        if (disabled_reason !== null) {
+            clone.disabled = true;
+            clone.classList.add('disabled');
+            clone.setAttribute('aria-disabled', 'true');
+        }
+        usage_classes[usage_class].appendChild(clone);
+    };
+
     const add_usage_buttons = (relevant_usages) => {
         for (const [usage, usage_def] of Object.entries(relevant_usages)) {
-            let clone = template.content.cloneNode(true).firstElementChild;
-            clone.innerText = usage_def['name'];
-            clone.title = usage;
-            clone.setAttribute('data-hid-usage', usage);
-            usage_classes[usage_def['class']].appendChild(clone);
+            add_usage_button(usage, usage_def);
         }
     }
 
@@ -1359,14 +1859,27 @@ function setup_usage_modal(source_or_target) {
         known_usages = usages[config['our_descriptor_number']];
     }
 
-    for (const usage_ of extra_usages[source_or_target]) {
-        if (!(usage_ in known_usages)) {
-            let clone = template.content.cloneNode(true).firstElementChild;
-            clone.innerText = readable_usage_name(usage_);
-            clone.title = usage_;
-            clone.setAttribute('data-hid-usage', usage_);
-            usage_classes['extra'].appendChild(clone);
+    const extra_usage_list = [...extra_usages[source_or_target]];
+    for (const usage_ of extra_usage_list) {
+        if (source_or_target == 'source' && usage_ == STANDARD_YAW_USAGE) {
+            continue;
         }
+        if (!(usage_ in known_usages)) {
+            const usage_def = usages['source_extra'][usage_] ?? {
+                'name': readable_usage_name(usage_),
+                'class': 'extra',
+            };
+            add_usage_button(usage_, usage_def, 'extra');
+        }
+    }
+
+    if (source_or_target == 'source' && !(STANDARD_YAW_USAGE in known_usages)) {
+        const yaw_available = extra_usages['source'].includes(STANDARD_YAW_USAGE);
+        add_usage_button(
+            STANDARD_YAW_USAGE,
+            usages['source_extra'][STANDARD_YAW_USAGE],
+            'extra',
+            yaw_available ? null : 'Only available on 9DoF boards with magnetometer');
     }
 
     const search_box = modal_element.querySelector('.usage_search_box');
@@ -1535,20 +2048,72 @@ function imu_enabled_onchange() {
     config['imu_enabled'] = document.getElementById("imu_enabled_checkbox").checked;
 }
 
-function imu_angle_clamp_limit_onchange() {
-    let value = parseInt(document.getElementById("imu_angle_clamp_limit_input").value, 10);
+function clamp_number_input(element_id, default_value, min_value, max_value) {
+    const element = document.getElementById(element_id);
+    let value = parseInt(element.value, 10);
     if (isNaN(value)) {
-        value = DEFAULT_IMU_ANGLE_CLAMP_LIMIT;
+        value = default_value;
     }
-    if (value > 90) {
-        value = 90;
-        document.getElementById("imu_angle_clamp_limit_input").value = 90;
+    if (value < min_value) {
+        value = min_value;
     }
-    config['imu_angle_clamp_limit'] = value;
+    if (value > max_value) {
+        value = max_value;
+    }
+    element.value = value;
+    return value;
 }
 
 function imu_filter_buffer_size_onchange() {
-    config['imu_filter_buffer_size'] = parseInt(document.getElementById("imu_filter_buffer_size_input").value, 10);
+    config['imu_filter_buffer_size'] = clamp_number_input("imu_filter_buffer_size_input", DEFAULT_IMU_FILTER_BUFFER_SIZE, 1, 16);
+}
+
+function imu_pitch_deadzone_onchange() {
+    config['imu_pitch_deadzone'] = clamp_number_input("imu_pitch_deadzone_input", DEFAULT_IMU_DEADZONE, 0, 90);
+}
+
+function imu_roll_deadzone_onchange() {
+    config['imu_roll_deadzone'] = clamp_number_input("imu_roll_deadzone_input", DEFAULT_IMU_DEADZONE, 0, 90);
+}
+
+function imu_yaw_deadzone_onchange() {
+    config['imu_yaw_deadzone'] = clamp_number_input("imu_yaw_deadzone_input", DEFAULT_IMU_DEADZONE, 0, 90);
+}
+
+function imu_pitch_pos_max_angle_onchange() {
+    config['imu_pitch_pos_max_angle'] = clamp_number_input("imu_pitch_pos_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_pitch_neg_max_angle_onchange() {
+    config['imu_pitch_neg_max_angle'] = clamp_number_input("imu_pitch_neg_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_roll_pos_max_angle_onchange() {
+    config['imu_roll_pos_max_angle'] = clamp_number_input("imu_roll_pos_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_roll_neg_max_angle_onchange() {
+    config['imu_roll_neg_max_angle'] = clamp_number_input("imu_roll_neg_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_yaw_pos_max_angle_onchange() {
+    config['imu_yaw_pos_max_angle'] = clamp_number_input("imu_yaw_pos_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_yaw_neg_max_angle_onchange() {
+    config['imu_yaw_neg_max_angle'] = clamp_number_input("imu_yaw_neg_max_angle_input", DEFAULT_IMU_MAX_ANGLE, 1, 90);
+}
+
+function imu_twist_deadzone_onchange() {
+    config['imu_twist_deadzone'] = clamp_number_input("imu_twist_deadzone_input", DEFAULT_IMU_TWIST_DEADZONE, 0, 255);
+}
+
+function imu_twist_max_rate_onchange() {
+    config['imu_twist_max_rate'] = clamp_number_input("imu_twist_max_rate_input", DEFAULT_IMU_TWIST_MAX_RATE, 1, 255);
+}
+
+function imu_yaw_leak_time_onchange() {
+    config['imu_yaw_leak_time'] = clamp_number_input("imu_yaw_leak_time_input", DEFAULT_IMU_YAW_LEAK_TIME, 0, 60);
 }
 
 function imu_roll_inverted_onchange() {
@@ -1557,6 +2122,10 @@ function imu_roll_inverted_onchange() {
 
 function imu_pitch_inverted_onchange() {
     config['imu_pitch_inverted'] = document.getElementById("imu_pitch_inverted_checkbox").checked;
+}
+
+function imu_yaw_inverted_onchange() {
+    config['imu_yaw_inverted'] = document.getElementById("imu_yaw_inverted_checkbox").checked;
 }
 
 function macro_entry_duration_onchange() {
@@ -1606,6 +2175,56 @@ function hid_on_disconnect(event) {
     if (event.device === device) {
         device = null;
         device_buttons_set_disabled_state(true);
+        update_bluetooth_buttons_state();
+        set_ble_devices_closed();
+    }
+}
+
+function device_is_nus_only() {
+    if (device == null) {
+        return false;
+    }
+
+    return /nus/i.test(device.productName || "");
+}
+
+function device_supports_bluetooth_pairing() {
+    if (device == null) {
+        return false;
+    }
+
+    if (device_is_nus_only()) {
+        return false;
+    }
+
+    const name = device.productName || "";
+    if (/bluetooth/i.test(name) || nus_tester_connected) {
+        return true;
+    }
+
+    // USB product strings may omit "Bluetooth" even on Pico W BT firmware; the
+    // PAIR_NEW_DEVICE command is safe to expose for any opened HID Remapper.
+    return /hid remapper/i.test(name);
+}
+
+function device_supports_flash_b_side() {
+    if (device == null) {
+        return false;
+    }
+
+    const name = device.productName || "";
+    return /hid remapper/i.test(name) && !/bluetooth/i.test(name) && !/nus/i.test(name) && !nus_tester_connected;
+}
+
+function update_bluetooth_buttons_state() {
+    if (device == null) {
+        bluetooth_buttons_set_state("closed");
+    } else if (device_is_nus_only()) {
+        bluetooth_buttons_set_state("nus_only");
+    } else if (device_supports_bluetooth_pairing()) {
+        bluetooth_buttons_set_state("bluetooth");
+    } else {
+        bluetooth_buttons_set_state("non_bluetooth");
     }
 }
 
@@ -1614,14 +2233,36 @@ function device_buttons_set_disabled_state(state) {
     document.getElementById("save_to_device").disabled = state;
     document.getElementById("flash_firmware").disabled = state;
     document.getElementById("flash_b_side").disabled = state;
-    document.getElementById("pair_new_device").disabled = state;
-    document.getElementById("clear_bonds").disabled = state;
+    document.getElementById("ble_devices_refresh").disabled = state;
+    document.getElementById("recenter_imu_button").disabled = state;
+    document.getElementById("pause_imu_button").disabled = state;
+    document.getElementById("resume_imu_button").disabled = state;
 }
 
-function bluetooth_buttons_set_visibility(visible) {
-    document.getElementById("pair_new_device_container").classList.toggle("d-none", !visible);
-    document.getElementById("clear_bonds_container").classList.toggle("d-none", !visible);
-    document.getElementById("flash_b_side_container").classList.toggle("d-none", visible);
+function bluetooth_buttons_set_state(state) {
+    const pair_enabled = state === "bluetooth";
+    document.getElementById("pair_new_device").disabled = !pair_enabled;
+    document.getElementById("clear_bonds").disabled = !pair_enabled;
+    document.getElementById("flash_b_side_container").classList.toggle("d-none", !device_supports_flash_b_side());
+
+    const status = document.getElementById("ble_input_status");
+    if (state === "bluetooth") {
+        status.className = "alert alert-info mt-2";
+        let message = "Ready. If pairing fails, click Forget all devices first to clear stale bonds. Put your BLE LE controller in pairing mode (Xbox: hold Sync until the Xbox button blinks), click Pair new device, and confirm the onboard LED turns solid. After connect, the LED blinks N times per cycle where N is the number of connected devices.";
+        if (nus_tester_connected && device != null && !/bluetooth/i.test(device.productName || "")) {
+            message += " NUS is connected, so Bluetooth firmware is active even though the USB name does not include \"Bluetooth\".";
+        }
+        status.textContent = message;
+    } else if (state === "nus_only") {
+        status.className = "alert alert-info mt-2";
+        status.textContent = "This Pico W / Pico 2 W firmware supports Web Bluetooth NUS input only. Physical BLE gamepad pairing requires an nRF52840 board (Feather or Xiao). Enable Floating tester in the NUS virtual input section to use NUS input.";
+    } else if (state === "non_bluetooth") {
+        status.className = "alert alert-warning mt-2";
+        status.textContent = "This device does not appear to support BLE gamepad pairing. Flash remapper_bluetooth_pico_w.uf2 or remapper_bluetooth_pico2_w.uf2 from the latest release.";
+    } else {
+        status.className = "alert alert-secondary mt-2";
+        status.textContent = "Open a Bluetooth-capable HID Remapper with Open device first.";
+    }
 }
 
 function mask_to_layer_list(layer_mask) {
@@ -1957,11 +2598,11 @@ function usage_search_onchange(element) {
             const label = usage_button.innerText.toLowerCase().replaceAll(" ", "");
             usage_button.classList.toggle('d-none', !label.includes(query));
             usage_button.removeAttribute('data-preferred-result');
-            if (label.includes(query)) {
+            if (label.includes(query) && !usage_button.disabled) {
                 hits++;
                 last_match = usage_button;
             }
-            if (label == query) {
+            if (label == query && !usage_button.disabled) {
                 exact_match = usage_button;
             }
         });

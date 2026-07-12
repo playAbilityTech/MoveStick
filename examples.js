@@ -101,8 +101,16 @@ const examples = [
             "input_labels": 0,
             "normalize_gamepad_inputs": false,
             "imu_enabled": true,
-            "imu_angle_clamp_limit": 30,
-            "imu_filter_buffer_size": 5
+            "imu_filter_buffer_size": 5,
+            "imu_pitch_deadzone": 0,
+            "imu_roll_deadzone": 0,
+            "imu_yaw_deadzone": 0,
+            "imu_pitch_pos_max_angle": 30,
+            "imu_pitch_neg_max_angle": 30,
+            "imu_roll_pos_max_angle": 30,
+            "imu_roll_neg_max_angle": 30,
+            "imu_yaw_pos_max_angle": 30,
+            "imu_yaw_neg_max_angle": 30
         }
     },
     {
@@ -206,8 +214,16 @@ const examples = [
             "input_labels": 0,
             "normalize_gamepad_inputs": false,
             "imu_enabled": true,
-            "imu_angle_clamp_limit": 30,
-            "imu_filter_buffer_size": 5
+            "imu_filter_buffer_size": 5,
+            "imu_pitch_deadzone": 0,
+            "imu_roll_deadzone": 0,
+            "imu_yaw_deadzone": 0,
+            "imu_pitch_pos_max_angle": 30,
+            "imu_pitch_neg_max_angle": 30,
+            "imu_roll_pos_max_angle": 30,
+            "imu_roll_neg_max_angle": 30,
+            "imu_yaw_pos_max_angle": 30,
+            "imu_yaw_neg_max_angle": 30
         }
     },
     {
@@ -1224,7 +1240,7 @@ const examples = [
     {
         'description': 'expressions: gamepad-to-mouse adapter',
         'config': {
-            "version": 6,
+            "version": 18,
             "unmapped_passthrough_layers": [],
             "partial_scroll_timeout": 1000000,
             "interval_override": 0,
@@ -1239,7 +1255,9 @@ const examples = [
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "source_port": 0,
+                    "target_port": 0
                 },
                 {
                     "target_usage": "0x00090002",
@@ -1250,7 +1268,9 @@ const examples = [
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "source_port": 0,
+                    "target_port": 0
                 },
                 {
                     "target_usage": "0x00010030",
@@ -1261,7 +1281,9 @@ const examples = [
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "source_port": 0,
+                    "target_port": 0
                 },
                 {
                     "target_usage": "0x00010031",
@@ -1272,7 +1294,9 @@ const examples = [
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "source_port": 0,
+                    "target_port": 0
                 },
                 {
                     "target_usage": "0x00010038",
@@ -1283,7 +1307,9 @@ const examples = [
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "source_port": 0,
+                    "target_port": 0
                 },
                 {
                     "target_usage": "0x00010038",
@@ -1294,29 +1320,61 @@ const examples = [
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "source_port": 0,
+                    "target_port": 0
                 },
                 {
+                    "source_usage": "0xfff90001",
                     "target_usage": "0x00010030",
-                    "source_usage": "0xfff30005",
-                    "scaling": 1000,
                     "layers": [
                         0
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "scaling": -1000,
+                    "source_port": 0,
+                    "target_port": 0
                 },
                 {
-                    "target_usage": "0x00010031",
-                    "source_usage": "0xfff30006",
-                    "scaling": 1000,
+                    "source_usage": "0xfff90002",
+                    "target_usage": "0x00010030",
                     "layers": [
                         0
                     ],
                     "sticky": false,
                     "tap": false,
-                    "hold": false
+                    "hold": false,
+                    "scaling": 1000,
+                    "source_port": 0,
+                    "target_port": 0
+                },
+                {
+                    "source_usage": "0xfff90003",
+                    "target_usage": "0x00010031",
+                    "layers": [
+                        0
+                    ],
+                    "sticky": false,
+                    "tap": false,
+                    "hold": false,
+                    "scaling": -1000,
+                    "source_port": 0,
+                    "target_port": 0
+                },
+                {
+                    "source_usage": "0xfff90004",
+                    "target_usage": "0x00010031",
+                    "layers": [
+                        0
+                    ],
+                    "sticky": false,
+                    "tap": false,
+                    "hold": false,
+                    "scaling": 1000,
+                    "source_port": 0,
+                    "target_port": 0
                 }
             ],
             "macros": [
@@ -1327,18 +1385,50 @@ const examples = [
                 [],
                 [],
                 [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
                 []
             ],
             "expressions": [
-                "0x00010030 input_state -128000 add dup abs 10000 gt mul 25 mul",
-                "0x00010031 input_state -128000 add dup abs 10000 gt mul 25 mul",
-                "0x00010033 input_state 1 mul 0x00010034 input_state -1 mul add 250 mul",
-                "0x00010035 input_state -128000 add dup abs 10000 gt mul -1 mul 250 mul",
-                "0x00010039 input_state 7000 gt not 0x00010039 input_state 45000 mul sin 1000 mul mul",
-                "0x00010039 input_state 7000 gt not 0x00010039 input_state 45000 mul cos -1000 mul mul",
+                "0x00010030 input_state_scaled eol -128000 add eol dup abs 10000 gt mul /* deadzone */ eol 25 mul /* scale */",
+                "0x00010031 input_state_scaled eol -128000 add eol dup abs 10000 gt mul /* deadzone */ eol 25 mul /* scale */",
+                "0x00010033 input_state_scaled eol 1 mul eol 0x00010034 input_state_scaled eol -1 mul eol add eol 250 mul",
+                "0x00010035 input_state_scaled /* right stick Y */ eol -128000 add eol dup abs 10000 gt mul /* deadzone */ eol -1 mul eol 250 mul /* scale */",
+                "",
+                "",
                 "",
                 ""
-            ]
+            ],
+            "gpio_debounce_time_ms": 5,
+            "our_descriptor_number": 0,
+            "ignore_auth_dev_inputs": false,
+            "macro_entry_duration": 1,
+            "gpio_output_mode": 0,
+            "quirks": [],
+            "input_labels": 1,
+            "normalize_gamepad_inputs": true
         }
     },
     {
